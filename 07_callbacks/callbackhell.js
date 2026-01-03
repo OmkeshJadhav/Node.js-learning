@@ -1,3 +1,5 @@
+// Callback hell - Callback inside another callback
+
 const fs = require('fs')
 const path = require('path')
 
@@ -7,7 +9,7 @@ const outputFilePath = path.join(__dirname, 'output.txt')
 fs.readFile(filePath, 'utf8', (err, data) => {
     if(err){
         console.log('An error occurred.');
-        return;Í
+        return;
     }
 
     console.log('File Content: ', data);
