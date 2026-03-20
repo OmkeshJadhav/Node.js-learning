@@ -1,6 +1,6 @@
 const lodash = require('lodash')
 
-const names = ['Omkesh', 'Dipti', 'Hrishikesh', 'Nilam', 'Ramesh', 'Shobha']
+const names = ['omkesh', 'dipti', 'hrishikesh', 'nilam', 'ramesh', 'shobha']
 
 const capitalize = lodash.map(names, lodash.capitalize);
 
