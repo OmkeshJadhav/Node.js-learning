@@ -13,9 +13,11 @@
 
 const express = require('express')
 const { requestTimeStampLogger } = require('./custom-middleware')
+const { myFirstMiddleware } = require('./middleware')
 const app = express()
 const port = 3000
 
+app.use(myFirstMiddleware)
 app.use(requestTimeStampLogger)
 
 app.get('/', (req, res) => {

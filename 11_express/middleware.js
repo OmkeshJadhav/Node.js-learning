@@ -19,4 +19,11 @@ const express = require('express')
 const app = express()
 const port = 3000
 
+// Define middleware function
+const myFirstMiddleware = (req, res, next) => {
+    console.log("This 1st middleware will run on every request.")
 
+    next()
+}
+
+module.exports = { myFirstMiddleware }
