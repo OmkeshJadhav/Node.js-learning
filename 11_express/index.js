@@ -12,11 +12,18 @@
 
 
 const express = require('express')
+const { requestTimeStampLogger } = require('./custom-middleware')
 const app = express()
 const port = 3000
 
+app.use(requestTimeStampLogger)
+
 app.get('/', (req, res) => {
     res.send('Hello World')
+})
+
+app.get('/about', (req, res) => {
+    res.send("About Page")
 })
 
 app.listen(port, () => {
