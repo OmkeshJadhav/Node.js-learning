@@ -1,0 +1,21 @@
+<!-- Reuse the common header component -->
+<%- include('../partials/header.ejs') %>
+
+<!-- Dynamically included the title -->
+<h2> <%= title %> </h2>
+
+<label>List of Products</label>
+
+<!-- Dynamically include the content / products -->
+<% if (products.length > 0) { %>
+    <ul>
+        <% products.forEach(product => { %>
+            <li><%= product.title %></li>
+        <% }) %>
+    </ul>
+<% } else { %>
+    <p>No products available</p>
+<% } %>
+
+<!-- Reuse the common footer component -->
+<%- include('../partials/footer.ejs') %>
