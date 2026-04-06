@@ -37,7 +37,7 @@ app.get('/get-all-books', (req, res) => {
 
 app.get('/get-book/:id', (req, res) => {
 
-    console.log(req.params.id)
+    console.log(typeof(req.params.id))
     const book = books.find(item => item.id === req.params.id)
 
     if (book) {
@@ -54,14 +54,14 @@ app.get('/get-book/:id', (req, res) => {
 app.post('/add-new-book', (req, res) => {
     const newBook = [
         {
-            id: books.id + 1,
+            id: Math.floor(Math.random() * 1000).toString(),
             title: `Book ${books.length + 1}`,
             writer: `Writer ${books.length + 1}`,
             description: `Description of book ${books.length + 1}`
         }
     ]
 
-    books.push(newBook)
+    books.push(...newBook)
 
     res.status(200).json({
         data: newBook,
@@ -71,8 +71,9 @@ app.post('/add-new-book', (req, res) => {
 
 app.put('/update-book/:id', (req, res) => {
     const findBook = books.find(book => book.id === req.params.id)
+    
 
-    if(findBook){
+    if (findBook) {
         findBook.title = req.body.title || findBook.title
         res.status(200).json({
             message: `Book with ID ${req.params.id} updated successfully.`,
@@ -83,13 +84,13 @@ app.put('/update-book/:id', (req, res) => {
             message: "Book not found"
         })
     }
-    
+
 })
 
 app.delete('/delete-book/:id', (req, res) => {
     const findBook = books.findIndex(book => book.id === req.params.id)
 
-    if(findBook !== -1){
+    if (findBook !== -1) {
         const deletedBook = books.splice(findBook, 1)
 
         res.status(200).json({
