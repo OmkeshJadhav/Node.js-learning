@@ -2,7 +2,75 @@ const express = require('express')
 const app = express()
 const PORT = 3000
 
+const mongoose = require("mongoose")
+
 app.use(express.json())
+
+mongoose.connect("mongodb+srv://omkeshjadhavdev_db_user:HGfpt75df09l5YPY@cluster0.v9t45zp.mongodb.net/")
+.then(console.log("DB connected successfully!"))
+.catch((e) => console.log("Issue connecting the DB: ", e))
+
+const userSchema = new mongoose.Schema({
+    name: String,
+    email: String,
+    age: Number,
+    isActive: Boolean,
+    tags: [String],
+    createdAt: { type: Date, default: Date.now()}
+})
+
+// create user model
+const User = mongoose.model('User', userSchema)
+
+const runQueryExample = async () => {
+    try {
+        // const newUser = await User.create({
+        //     name: "Omkesh Jadhav",
+        //     email: "omkesh.jadhav@gmail.com",
+        //     age: 31,
+        //     isActive: true,
+        //     tags: ["developer", "designer", "lead"]
+        // })
+
+        // Can also do the same using:
+
+        // const newUser1 = new User({
+        //     name: "Dipti Chalke Jadhav",
+        //     email: "dipti.chalke-jadhav@gmail.com",
+        //     age: 31,
+        //     isActive: true,
+        //     tags: ["CA", "accountant"]
+        // })
+
+        // await newUser1.save()
+
+        // console.log ('New user created: ', newUser)
+
+
+        const allUsers = await User.find({}) // Empty {} is used for getting All the data
+
+        // console.log("All Users -> ", allUsers)
+
+        const findInactiveUsers = await User.find({isActive: false})  // Finds only those users who fits the specified criteria
+
+        // console.log(findInactiveUsers)
+
+        const getFirstUser = await User.findOne({isActive: true})  // Finds only 1st data that fits the specified criteria
+
+        // console.log(getFirstUser)
+
+        const getSpecificUser = await User.findById("69d5c0c7907689b0eb749513")
+
+        console.log(getSpecificUser)
+
+    } catch (error) {
+        console.log(error)
+    } finally {
+        await mongoose.connection.close()
+    }
+}
+
+runQueryExample()
 
 const books = [
     {
@@ -37,7 +105,6 @@ app.get('/get-all-books', (req, res) => {
 
 app.get('/get-book/:id', (req, res) => {
 
-    console.log(typeof(req.params.id))
     const book = books.find(item => item.id === req.params.id)
 
     if (book) {
