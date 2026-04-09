@@ -1,14 +1,16 @@
+require('dotenv').config()
 const express = require('express')
+
 const app = express()
-const PORT = 3000
+const PORT = process.env.PORT || 3000
 
 const mongoose = require("mongoose")
 
 app.use(express.json())
 
 mongoose.connect("mongodb+srv://omkeshjadhavdev_db_user:HGfpt75df09l5YPY@cluster0.v9t45zp.mongodb.net/")
-.then(console.log("DB connected successfully!"))
-.catch((e) => console.log("Issue connecting the DB: ", e))
+    .then(console.log("DB connected successfully!"))
+    .catch((e) => console.log("Issue connecting the DB: ", e))
 
 const userSchema = new mongoose.Schema({
     name: String,
@@ -16,7 +18,7 @@ const userSchema = new mongoose.Schema({
     age: Number,
     isActive: Boolean,
     tags: [String],
-    createdAt: { type: Date, default: Date.now()}
+    createdAt: { type: Date, default: Date.now() }
 })
 
 // create user model
@@ -51,11 +53,11 @@ const runQueryExample = async () => {
 
         // console.log("All Users -> ", allUsers)
 
-        const findInactiveUsers = await User.find({isActive: false})  // Finds only those users who fits the specified criteria
+        const findInactiveUsers = await User.find({ isActive: false })  // Finds only those users who fits the specified criteria
 
         // console.log(findInactiveUsers)
 
-        const getFirstUser = await User.findOne({isActive: true})  // Finds only 1st data that fits the specified criteria
+        const getFirstUser = await User.findOne({ isActive: true })  // Finds only 1st data that fits the specified criteria
 
         // console.log(getFirstUser)
 
@@ -138,7 +140,7 @@ app.post('/add-new-book', (req, res) => {
 
 app.put('/update-book/:id', (req, res) => {
     const findBook = books.find(book => book.id === req.params.id)
-    
+
 
     if (findBook) {
         findBook.title = req.body.title || findBook.title
@@ -171,6 +173,6 @@ app.delete('/delete-book/:id', (req, res) => {
     }
 })
 
-app.listen(PORT, (req, res) => {
+app.listen(PORT, () => {
     console.log(`App is listening on PORT ${PORT}`)
 })
