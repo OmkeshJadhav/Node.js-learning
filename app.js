@@ -1,78 +1,38 @@
 require('dotenv').config()
 const express = require('express')
+const connectToDB = require('./database/db')
+const userRoutes = require('./13_restful_apis/routes/user-routes')
 
 const app = express()
 const PORT = process.env.PORT || 3000
 
-const mongoose = require("mongoose")
-
+// middleware
 app.use(express.json())
+app.use(express.urlencoded({ extended: true }));
 
-mongoose.connect("mongodb+srv://omkeshjadhavdev_db_user:HGfpt75df09l5YPY@cluster0.v9t45zp.mongodb.net/")
-    .then(console.log("DB connected successfully!"))
-    .catch((e) => console.log("Issue connecting the DB: ", e))
+// routes
+app.use('/api/users', userRoutes)
 
-const userSchema = new mongoose.Schema({
-    name: String,
-    email: String,
-    age: Number,
-    isActive: Boolean,
-    tags: [String],
-    createdAt: { type: Date, default: Date.now() }
-})
-
-// create user model
-const User = mongoose.model('User', userSchema)
-
-const runQueryExample = async () => {
+const startServer = async () => {
     try {
-        // const newUser = await User.create({
-        //     name: "Omkesh Jadhav",
-        //     email: "omkesh.jadhav@gmail.com",
-        //     age: 31,
-        //     isActive: true,
-        //     tags: ["developer", "designer", "lead"]
-        // })
+        // connect to database 
+        connectToDB()
 
-        // Can also do the same using:
-
-        // const newUser1 = new User({
-        //     name: "Dipti Chalke Jadhav",
-        //     email: "dipti.chalke-jadhav@gmail.com",
-        //     age: 31,
-        //     isActive: true,
-        //     tags: ["CA", "accountant"]
-        // })
-
-        // await newUser1.save()
-
-        // console.log ('New user created: ', newUser)
-
-
-        const allUsers = await User.find({}) // Empty {} is used for getting All the data
-
-        // console.log("All Users -> ", allUsers)
-
-        const findInactiveUsers = await User.find({ isActive: false })  // Finds only those users who fits the specified criteria
-
-        // console.log(findInactiveUsers)
-
-        const getFirstUser = await User.findOne({ isActive: true })  // Finds only 1st data that fits the specified criteria
-
-        // console.log(getFirstUser)
-
-        const getSpecificUser = await User.findById("69d5c0c7907689b0eb749513")
-
-        console.log(getSpecificUser)
-
+        // listen to the server
+        app.listen(PORT, () => {
+            console.log(`App is listening on PORT ${PORT}`);
+        });
     } catch (error) {
-        console.log(error)
-    } finally {
-        await mongoose.connection.close()
+        console.error("Server start failed -> ", error);
     }
 }
 
-runQueryExample()
+startServer()
+
+
+
+
+
 
 const books = [
     {
@@ -173,6 +133,3 @@ app.delete('/delete-book/:id', (req, res) => {
     }
 })
 
-app.listen(PORT, () => {
-    console.log(`App is listening on PORT ${PORT}`)
-})
