@@ -45,9 +45,9 @@ const createNewUser = async (req, res) => {
     try {
         const userData = req.body
 
-        if (!userData.name || !userData.age) {
+        if (!userData.name || !userData.email) {
             return res.status(400).json({
-                message: "Name and age are required"
+                message: "Name and email are required"
             });
         }
 
