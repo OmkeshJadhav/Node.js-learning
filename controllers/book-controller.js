@@ -59,6 +59,11 @@ const createBook = async (req, res) => {
                 success: false,
                 message: 'Name and author are required.'
             })
+        } else if(publication_year < 1000){
+            return res.status(400).json({
+                success: false,
+                message: 'Publication Year cannot be before 1000.'
+            })
         }
 
         const book = await Book.create({
@@ -100,7 +105,7 @@ const updateBook = async (req, res) => {
             updateData,
             {
                 runValidators: true,
-                new: true
+                returnDocument: 'after'
             }
         );
 
