@@ -6,6 +6,12 @@ const UserSchema = new mongoose.Schema({
         required: true,
         trim: true
     },
+    username: {
+        type: string,
+        required: true,
+        unique: true,
+        trim: true
+    }, 
     email: {
         type: String,
         required: true,
@@ -13,6 +19,15 @@ const UserSchema = new mongoose.Schema({
         lowercase: true,
         trim: true,
         match: [/^\S+@\S+\.\S+$/, 'Please use a valid email']
+    },
+    password: {
+        type: string,
+        required: true
+    },
+    role: {
+        type: string,
+        enum: ['user', 'admin'],
+        default: 'user'
     },
     age: {
         type: Number,
