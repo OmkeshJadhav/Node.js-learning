@@ -7,7 +7,7 @@ const UserSchema = new mongoose.Schema({
         trim: true
     },
     username: {
-        type: string,
+        type: String,
         required: true,
         unique: true,
         trim: true
@@ -21,11 +21,11 @@ const UserSchema = new mongoose.Schema({
         match: [/^\S+@\S+\.\S+$/, 'Please use a valid email']
     },
     password: {
-        type: string,
+        type: String,
         required: true
     },
     role: {
-        type: string,
+        type: String,
         enum: ['user', 'admin'],
         default: 'user'
     },
