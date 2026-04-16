@@ -5,7 +5,7 @@ const userRoutes = require('./routes/user-routes')
 const bookRoutes = require('./routes/book-routes')
 const authRoutes = require('./routes/auth-routes')
 const homeRoutes = require('./routes/home-routes')
-// const adminRoutes = require('./routes/admin-routes')
+const adminRoutes = require('./routes/admin-routes')
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -19,7 +19,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/books', bookRoutes)
 app.use('/api/home', homeRoutes)
-// app.use('/api/admin', adminRoutes)
+app.use('/api/admin', adminRoutes)
 
 const startServer = async () => {
     try {
