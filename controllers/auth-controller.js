@@ -62,11 +62,12 @@ const loginUser = async (req, res) => {
         const comparePassword = await bcrypt.compare(password, user.password)
 
         if (comparePassword) {
-            const accessToken = jwt.sign({
-                userId: user._id,
-                username: user.username,
-                role: user.role
-            },
+            const accessToken = jwt.sign(
+                {
+                    userId: user._id,
+                    username: user.username,
+                    role: user.role
+                },
                 process.env.JWT_SECRET_KEY,
                 {
                     expiresIn: '15m'
@@ -76,13 +77,13 @@ const loginUser = async (req, res) => {
             res.status(200).json({
                 succeess: true,
                 message: `User loggedin successfully`,
-                token: accessToken,
                 data: {
                     _id: user._id,
                     username: user.username,
                     email: user.email,
                     role: user.role
                 },
+                token: accessToken,
             })
         } else {
             res.status(400).json({
