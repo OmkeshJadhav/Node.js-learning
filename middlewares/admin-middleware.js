@@ -27,3 +27,18 @@ const adminMiddleware = (req, res, next) => {
 }
 
 module.exports = adminMiddleware
+
+
+const authorizeRoles = (...roles) => {
+    return (req, res, next) => {
+        if (!req.userInfo || !roles.includes(req.userInfo.role)) {
+            return res.status(403).json({
+                success: false,
+                message: "Access denied"
+            })
+        }
+        next()
+    }
+}
+
+module.exports = authorizeRoles;
