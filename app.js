@@ -26,7 +26,7 @@ app.use('/api/images', imageRoutes)
 const startServer = async () => {
     try {
         // connect to database 
-        connectToDB()
+        await connectToDB()
 
         // listen to the server
         app.listen(PORT, () => {

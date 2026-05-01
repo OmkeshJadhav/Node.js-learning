@@ -14,25 +14,26 @@ const uploadImage = async (req, res) => {
         
         // Upoad file to cloudinary
         const {url, publicId, resourceType} = await uploadToCloudinary(req.file.path)
+                // ------ NEED TO ADD CLEAN UP IF UPLOAD FAILS
 
         // Store image url, publicId, resourceType and uploadedBy to DB
-        const newlyUploaedImage = new Image({
+        const newlyUploadedImage = new Image({
             url,
             publicId,
             resourceType,
             uploadedBy: req.userInfo.userId
         })
 
-        await newlyUploaedImage.save()
+        await newlyUploadedImage.save()
 
         // delete file from local storage after uploading to cloudinary
-        fs.unlinkSync(req.file.path);
+        await fs.promises.unlink(req.file.path);
 
         res.status(201).json({
             success: true,
             message: `Image uploaded successfully`,
             data: {
-                image: newlyUploaedImage
+                image: newlyUploadedImage
             }
         })
 
@@ -48,6 +49,13 @@ const uploadImage = async (req, res) => {
 const fetchImages = async (req, res) => {
     try {
         const images = await Image.find({})
+
+        //  Pagination
+            // const page = req.query.page || 1
+            // const limit = req.query.limit || 10
+            // const images = await Image.find({})
+            // .skip((page - 1) * limit)
+            // .limit(limit)
 
         if(images){
             res.status(200).json({

@@ -11,6 +11,7 @@ const storage = multer.diskStorage({
         cb(null, file.fieldname + "-" + uniqueSuffix)
     }
 })
+        // Currently using diskStorage but best practice is to use memoryStorage
 
 // Filter for File type
 const checkFilter = (req, file, cb) => {
