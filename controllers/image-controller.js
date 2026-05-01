@@ -45,6 +45,26 @@ const uploadImage = async (req, res) => {
     }
 }
 
+const fetchImages = async (req, res) => {
+    try {
+        const images = await Image.find({})
+
+        if(images){
+            res.status(200).json({
+                success: true,
+                data: images
+            })
+        }
+    } catch (error) {
+        console.error(`Error uploading the image.`, error)
+        res.status(500).json({
+            success: false,
+            message: 'Something went wrong! Please try again.'
+        })
+    }
+}
+
 module.exports = {
-    uploadImage
+    uploadImage,
+    fetchImages
 };
