@@ -6,6 +6,7 @@ const bookRoutes = require('./routes/book-routes')
 const authRoutes = require('./routes/auth-routes')
 const homeRoutes = require('./routes/home-routes')
 const adminRoutes = require('./routes/admin-routes')
+const imageRoutes = require('./routes/image-routes')
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -20,6 +21,7 @@ app.use('/api/users', userRoutes)
 app.use('/api/books', bookRoutes)
 app.use('/api/home', homeRoutes)
 app.use('/api/admin', adminRoutes)
+app.use('/api/images', imageRoutes)
 
 const startServer = async () => {
     try {

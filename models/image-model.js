@@ -1,11 +1,15 @@
 const mongoose = require("mongoose");
 
 const ImageSchema = new mongoose.Schema({
+    publicId: {
+        type: String,
+        required: true
+    },
     url: {
         type: String,
         required: true
     },
-    publicId: {
+    resourceType: {
         type: String,
         required: true
     },
@@ -14,6 +18,6 @@ const ImageSchema = new mongoose.Schema({
         ref: 'User',
         required: true
     }
-}, { timestamps: true});
+}, { timestamps: true });
 
 module.exports = mongoose.model("Image", ImageSchema)
