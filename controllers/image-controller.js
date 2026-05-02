@@ -1,8 +1,8 @@
+const mongoose = require('mongoose')
 const Image = require('../models/image-model')
 const { uploadToCloudinary } = require('../helpers/cloudinaryHelper')
 const cloudinary = require("../config/cloudinary")
 const fs = require('fs');
-const { userInfo } = require('os');
 
 const uploadImage = async (req, res) => {
     try {
@@ -59,7 +59,13 @@ const fetchImages = async (req, res) => {
         // .skip((page - 1) * limit)
         // .limit(limit)
 
-        if (images) {
+        if (!images) {
+            res.status(400).json({
+                success: false,
+                message: `No images found`
+
+            })
+        } else {
             res.status(200).json({
                 success: true,
                 data: images
@@ -95,7 +101,7 @@ const deleteImage = async (req, res) => {
         }
 
         // Check if image is uploaded by the same user who is trying to delete it
-        if (image.uploadedBy.toString() !== userId) {
+        if (image.uploadedBy.toString() !== userId && req.userInfo.role !== 'admin') {
             return res.status(403).json({
                 success: false,
                 message: `You are not authorized to delete this image becuase you haven't uploaded it.`
@@ -130,8 +136,103 @@ const deleteImage = async (req, res) => {
     }
 }
 
+const bulkDeleteImages = async (req, res) => {
+    try {
+        const { imageIds } = req.body
+        const userId = req.userInfo.userId
+        const userRole = req.userInfo.role
+
+
+        // 1. Validate input
+        if (!Array.isArray(imageIds) || imageIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'imageIds must be a non-empty array'
+            })
+        }
+
+        // 1. Limit Bulk Size
+        if (imageIds.length > 50) {
+            return res.status(400).json({
+                message: 'Max 50 images allowed per request'
+            })
+        }
+
+        // 2. Validate ObjectIds
+        const validIds = imageIds.filter(id => mongoose.Types.ObjectId.isValid(id))
+
+        if (validIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'No valid image IDs provided'
+            })
+        }
+
+        // 3. Fetch images
+        const images = await Image.find({ _id: { $in: validIds } })
+            .select('publicId uploadedBy')
+
+        if (images.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'No images found'
+            })
+        }
+
+        // 4. Filter authorized images
+        const authorizedImages = images.filter(img =>
+            img.uploadedBy.toString() === userId || userRole === 'admin'
+        )
+
+        if (authorizedImages.length === 0) {
+            return res.status(403).json({
+                success: false,
+                message: 'Not authorized to delete these images'
+            })
+        }
+
+        // 5. Extract publicIds
+        const publicIds = authorizedImages.map(img => img.publicId)
+
+        // 6. Delete from Cloudinary (bulk)
+        const cloudinaryResult = await cloudinary.api.delete_resources(publicIds)
+
+        const failedDeletes = Object.entries(cloudinaryResult.deleted)
+            .filter(([_, status]) => status !== 'deleted' && status !== 'not_found')
+
+        const deletedMap = cloudinaryResult.deleted
+
+        const successfulPublicIds = Object.keys(deletedMap).filter(
+            key => deletedMap[key] === 'deleted' || deletedMap[key] === 'not_found'
+        )
+
+        // 7. Delete from DB
+        const idsToDelete = authorizedImages
+            .filter(img => successfulPublicIds.includes(img.publicId))
+            .map(img => img._id)
+
+        await Image.deleteMany({ _id: { $in: idsToDelete } })
+
+        res.status(200).json({
+            success: true,
+            message: 'Images deleted successfully',
+            deletedCount: idsToDelete.length,
+            failedDeletes,
+            cloudinaryResult
+        })
+
+    } catch (error) {
+        console.error('Bulk delete error:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Something went wrong'
+        })
+    }
+}
+
 module.exports = {
     uploadImage,
     fetchImages,
-    deleteImage
+    deleteImage,
+    bulkDeleteImages
 };
