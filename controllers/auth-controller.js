@@ -103,19 +103,19 @@ const changePassword = async (req, res) => {
     try {
         const userId = req.userInfo.userId
         
-        // extract old and new password from the request body
-        const { oldPassword, newPassword } = req.body;
-        
         // Find current logged in user
         const user = await User.findById(userId)
-
+        
         if (!user) {
             return res.status(400).json({
                 success: false,
                 message: 'User not found. '
             })
         }
-
+        
+        // extract old and new password from the request body
+        const { oldPassword, newPassword } = req.body;
+        
         // Check for matching oldPassword
         const isOldPasswordMatch = await bcrypt.compare(oldPassword, user.password)
 
