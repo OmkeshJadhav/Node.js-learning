@@ -50,29 +50,44 @@ const uploadImage = async (req, res) => {
 
 const fetchImages = async (req, res) => {
     try {
-        const images = await Image.find({})
+        const page = Math.max(parseInt(req.query.page) || 1, 1)
+        const limit = Math.min(Math.max(parseInt(req.query.limit) || 3, 1), 50)
+        const skip = (page - 1) * limit
 
-        //  Pagination
-        // const page = req.query.page || 1
-        // const limit = req.query.limit || 10
-        // const images = await Image.find({})
-        // .skip((page - 1) * limit)
-        // .limit(limit)
+        const sortBy = req.query.sortBy || 'createdAt';
+        const sortOrder = req.query.sortOrder === 'asc' ? 1 : -1
+        const sortObj = { [sortBy]: sortOrder }
 
-        if (!images) {
+        const [totalImages, images] = await Promise.all([
+            Image.countDocuments(),
+            Image.find()
+                .skip(skip)
+                .limit(limit)
+                .sort(sortObj)
+                .lean()   // Faster + less memory
+        ])
+
+        const totalPages = Math.ceil(totalImages / limit)
+
+        if (images.length === 0) {
             res.status(400).json({
-                success: false,
-                message: `No images found`
-
+                success: true,
+                message: 'No images found',
+                data: []
             })
         } else {
             res.status(200).json({
                 success: true,
+                currentPage: page,
+                totalImages,
+                totalPages,
+                hasNextPage: page < totalPages,
+                hasPrevPage: page > 1,
                 data: images
             })
         }
     } catch (error) {
-        console.error(`Error uploading the image.`, error)
+        console.error(`Error fetching images.`, error)
         res.status(500).json({
             success: false,
             message: 'Something went wrong! Please try again.'
@@ -151,14 +166,14 @@ const bulkDeleteImages = async (req, res) => {
             })
         }
 
-        // 1. Limit Bulk Size
+        // 2. Limit Bulk Size
         if (imageIds.length > 50) {
             return res.status(400).json({
                 message: 'Max 50 images allowed per request'
             })
         }
 
-        // 2. Validate ObjectIds
+        // 3. Validate ObjectIds
         const validIds = imageIds.filter(id => mongoose.Types.ObjectId.isValid(id))
 
         if (validIds.length === 0) {
@@ -168,7 +183,7 @@ const bulkDeleteImages = async (req, res) => {
             })
         }
 
-        // 3. Fetch images
+        // 4. Fetch images
         const images = await Image.find({ _id: { $in: validIds } })
             .select('publicId uploadedBy')
 
@@ -179,7 +194,7 @@ const bulkDeleteImages = async (req, res) => {
             })
         }
 
-        // 4. Filter authorized images
+        // 5. Filter authorized images
         const authorizedImages = images.filter(img =>
             img.uploadedBy.toString() === userId || userRole === 'admin'
         )
@@ -191,10 +206,10 @@ const bulkDeleteImages = async (req, res) => {
             })
         }
 
-        // 5. Extract publicIds
+        // 6. Extract publicIds
         const publicIds = authorizedImages.map(img => img.publicId)
 
-        // 6. Delete from Cloudinary (bulk)
+        // 7. Delete from Cloudinary (bulk)
         const cloudinaryResult = await cloudinary.api.delete_resources(publicIds)
 
         const failedDeletes = Object.entries(cloudinaryResult.deleted)
@@ -206,7 +221,7 @@ const bulkDeleteImages = async (req, res) => {
             key => deletedMap[key] === 'deleted' || deletedMap[key] === 'not_found'
         )
 
-        // 7. Delete from DB
+        // 8. Delete from DB
         const idsToDelete = authorizedImages
             .filter(img => successfulPublicIds.includes(img.publicId))
             .map(img => img._id)
