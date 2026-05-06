@@ -2,7 +2,7 @@ const Book = require('../models/book-model')
 
 const getAllBooks = async (_, res) => {
     try {
-        const allBooks = await Book.find()
+        const allBooks = await Book.find().populate('author')
 
         if (allBooks.length > 0) {
             res.status(200).json({
@@ -27,7 +27,7 @@ const getAllBooks = async (_, res) => {
 
 const getBookById = async (req, res) => {
     try {
-        const book = await Book.findById(req.params.id)
+        const book = await Book.findById(req.params.id).populate('author')
 
         if (!book) {
             return res.status(404).json({

@@ -8,9 +8,8 @@ const BookSchema = new mongoose.Schema({
         trim: true
     },
     author: {
-        type: String,
-        required: [true, 'Author name is required'],
-        trim: true
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Author'
     },
     publication_year: {
         type: Number,
