@@ -174,22 +174,6 @@ const productAggregation2 = async (req, res) => {
     }
 }
 
-const productAggregation3 = async (req, res) => {
-    try {
-        const productResult = await Product.aggregate([
-            {
-                $project
-            }
-        ])
-    } catch (error) {
-        console.log(error)
-        res.status(500).json({
-            success: false,
-            message: 'Something went wrong!'
-        })
-    }
-}
-
 
 module.exports = {
     InsertSampleData,
