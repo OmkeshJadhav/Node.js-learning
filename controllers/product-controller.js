@@ -147,6 +147,18 @@ const productAggregation2 = async (req, res) => {
                     }
                 }
             },
+            {
+                $project: {
+                    _id: 0,
+                    totalRevenue: 1,
+                    avgProductPrice: 1,
+                    maxProductPrice: 1,
+                    minProductPrice: 1,
+                    priceRange: {
+                        $subtract: ["$maxProductPrice", "$minProductPrice"]
+                    }
+                }
+            }
         ])
 
         res.status(200).json({
@@ -161,6 +173,23 @@ const productAggregation2 = async (req, res) => {
         })
     }
 }
+
+const productAggregation3 = async (req, res) => {
+    try {
+        const productResult = await Product.aggregate([
+            {
+                $project
+            }
+        ])
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({
+            success: false,
+            message: 'Something went wrong!'
+        })
+    }
+}
+
 
 module.exports = {
     InsertSampleData,
