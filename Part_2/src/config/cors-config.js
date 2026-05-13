@@ -4,12 +4,12 @@ const configureCors = () => {
     return cors({
         // origin -> this will tell that which origin are allowed to access your APIs
         origin: (origin, callback) => {
-            const allowedOrigins = [
+            const whitelistedOrigins = [
                 'http://localhost:3000',  // local dev
                 'https://yourcustomdomain.com'  // production domain
             ]
 
-            if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+            if (!origin || whitelistedOrigins.includes(origin)) {    // !origin -> Some requests do not include an Origin header, such as:Postman requests, Mobile apps, Server-to-server requests, Same-origin requests in some cases - In these cases origin is undefined/null/empty
                 callback(null, true)  // true -> Giving permission so that request can be called
             } else {
                 callback(new Error('Not allowed by cors.'))
