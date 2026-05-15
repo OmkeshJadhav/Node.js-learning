@@ -4,6 +4,7 @@ const express = require('express')
 const { configureCors } = require('./src/config/cors-config')
 const {addTimeStamp, requestLogger} = require('./src/middleware/customMiddleware')
 const globalErrorHandler = require('./src/middleware/globalErrorHandler')
+const {contentTypeVersioning, headerVersioning, urlVersioning} = require('./src/middleware/apiVersioning')
 
 const app = express();
 const PORT = process.env.PORT || 3000
@@ -14,6 +15,9 @@ app.use(requestLogger)
 // app.use(cors())
 app.use(configureCors())
 app.use(express.json())
+
+// 
+app.use('/api/v1', urlVersioning('v1'))
 
 // Routes
 app.use('/api/users', userRoutes)
