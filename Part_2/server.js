@@ -22,6 +22,9 @@ app.use(express.json())
 // API versioning
 app.use('/api', urlVersioning('v1'))
 
+// Routes
+app.use('/api/v1/items', itemRoutes)
+
 // Global Error Handler (ALWAYS LAST)
 app.use(globalErrorHandler)
 
