@@ -1,4 +1,6 @@
 const asyncHandler = require('../middleware/asyncHandler')
+const CustomError = require('../utils/custom-error')
+const globalErrorHandler = require('../middleware/globalErrorHandler')
 
 const items = [
     {
@@ -23,8 +25,27 @@ const items = [
     }
 ]
 
-const getItem = asyncHandler(async(req, res) => {
+const getItem = asyncHandler(async (req, res) => {
     res.json(items)
 })
 
-module.exports = {getItem}
+const createItem = asyncHandler(async (req, res) => {
+    console.log(req.body);
+    if (!req.body.name) {
+        throw new CustomError('Item name is required', 400)
+    }
+
+    const newItem = {
+        id: items.length + 1,
+        name: req.body.name
+    }
+
+    items.push(newItem)
+
+    res.status(201).json({
+        success: true,
+        data: newItem
+    })
+})
+
+module.exports = { getItem, createItem }
