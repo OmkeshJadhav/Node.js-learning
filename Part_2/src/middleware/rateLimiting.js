@@ -1,4 +1,4 @@
-import { rateLimit } from 'express-rate-limit'
+const rateLimit = require('express-rate-limit')
 
 const basicRateLimiter = (maxRequests, time) => {
     return rateLimit({
