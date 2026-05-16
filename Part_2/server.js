@@ -6,6 +6,7 @@ const { addTimeStamp, requestLogger } = require('./src/middleware/customMiddlewa
 const globalErrorHandler = require('./src/middleware/globalErrorHandler')
 const { contentTypeVersioning, headerVersioning, urlVersioning } = require('./src/middleware/apiVersioning')
 const { basicRateLimiter } = require('./src/middleware/rateLimiting')
+const itemRoutes = require('./src/routes/item-routes')
 
 const app = express();
 const PORT = process.env.PORT || 3000
@@ -18,11 +19,8 @@ app.use(configureCors())
 app.use(basicRateLimiter(100, 15*60*1000))
 app.use(express.json())
 
-// 
-app.use('/api/v1', urlVersioning('v1'))
-
-// Routes
-app.use('/api/users', userRoutes)
+// API versioning
+app.use('/api', urlVersioning('v1'))
 
 // Global Error Handler (ALWAYS LAST)
 app.use(globalErrorHandler)

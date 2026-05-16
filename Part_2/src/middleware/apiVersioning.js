@@ -1,5 +1,5 @@
 const urlVersioning = (version) => (req, res, next) => {
-    if (req.path.startsWith(`/api/${version}`)) {
+    if (req.path.startsWith(`/${version}`)) {
         next()
     } else {
         return res.status(404).json({
