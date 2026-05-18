@@ -38,6 +38,36 @@ async function testRedisConnection(){
     try {
         await client.connect()
         console.log("Connected to Redis");
+
+        // set value for a key
+        await client.set("key", "Omkesh")
+
+        // get value of a key
+        const extractValue = await client.get("key")  // null if key is not available
+        console.log(extractValue);
+
+        // delete key
+        const deleteCount = await client.del('key')
+        console.log(deleteCount);
+        
+        await client.set('num', 100)
+
+        // increment value
+        const incrementValue = await client.incr('num')
+        console.log(incrementValue);
+
+        // incrementBy
+        const incrementByValue = await client.incrBy('num', 9)
+        console.log(incrementByValue)
+
+        // decrement value
+        const decrementValue = await client.decr('num')
+        console.log(decrementValue)
+
+        // decrementBy value
+        const decrementByValue = await client.decrBy('num', 5)
+        console.log(decrementByValue)
+        
     } catch (error) {
         console.error("Error connecting Redis", error);
         
