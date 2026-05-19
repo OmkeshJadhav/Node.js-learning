@@ -17,7 +17,7 @@ const { basicRateLimiter } = require('./src/middleware/rateLimiting')
 const itemRoutes = require('./src/routes/item-routes')
 
 // Redis service
-const { testRedisOperations } = require('./src/services/redis/redis-service')
+const { testRedisOperations, testRedisFeatures } = require('./src/services/redis-service')
 
 
 const app = express();
@@ -48,6 +48,9 @@ async function startServer() {
 
         // Test Redis
         await testRedisOperations()
+
+        // Test Redis Features
+        testRedisFeatures()
 
         // Start Express server
         app.listen(PORT, () => {
