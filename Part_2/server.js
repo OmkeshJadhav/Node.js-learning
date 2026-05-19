@@ -17,7 +17,7 @@ const { basicRateLimiter } = require('./src/middleware/rateLimiting')
 const itemRoutes = require('./src/routes/item-routes')
 
 // Redis service
-const { testRedisOperations } = require('./src/services/redis-service')
+const { testRedisOperations } = require('./src/services/redis/redis-service')
 
 
 const app = express();
