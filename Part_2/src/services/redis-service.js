@@ -46,12 +46,12 @@ async function testRedisOperations() {
         // TTL - Time To Live -> How many seconds are left before the key expires
         const ttl = await client.ttl('token')
         console.log('TTL:', ttl)  // -1 : Key exists forever, -2: Key does not exist.
-        
+
         // setInterval(async () => {
         //     const ttl = await client.ttl('token')
         //     console.log('Remaining TTL:', ttl)
         // }, 1000)
-        
+
 
     } catch (error) {
         console.error('Redis operation error:', error)
@@ -116,7 +116,86 @@ async function testRedisFeatures() {
     }
 }
 
+async function redisPipelineAndTransactions() {
+    try {
+        // Pipelining - Sending multiple commands to a redis server in batch → Performance optimization
+        // Transaction - Allow multiple commands to be executed as a single unit → Atomic execution
+
+        const transaction = client.multi()
+
+        transaction.set("transaction-key1", "value1")
+        transaction.set("transaction-key2", "value2")
+        transaction.get("transaction-key1")
+        transaction.get("transaction-key2")
+
+        const transactionResult = await transaction.exec()
+        console.log("transactionResult: ", transactionResult)
+
+        const pipeline = client.multi()
+
+        pipeline.set("pipeline-key1", "value1")
+        pipeline.set("pipeline-key2", "value2")
+        pipeline.get("pipeline-key1")
+        pipeline.get("pipeline-key2")
+
+        const pipelineResult = await pipeline.exec()
+        console.log("pipelineResult: ", pipelineResult)
+
+        // Transaction Example
+        const dummyTransactionExample = client.multi()
+
+        dummyTransactionExample.decrBy('account:1234:balance', 100)
+        dummyTransactionExample.incrBy('account:4321:balance', 100)
+
+        const dummyTransactionResult = await dummyTransactionExample.exec()
+        console.log("dummyTransactionResult: ", dummyTransactionResult);
+
+        // Pipeline Example
+        const dummyPipelineOne = client.multi()
+
+        for (let i; i < 1000; i++) {
+            dummyPipelineOne.set(`user:${i}:action`, `Action${i}`)
+        }
+
+        const dummyPipelineOneResult = await dummyPipelineOne.exec()
+        console.log("dummyPipelineOneResult: ", dummyPipelineOneResult)
+
+        // Cart Example - Transaction
+        const cartExample = client.multi()
+
+        cartExample.hIncrBy('cart:1234', 'item-count', 1)
+        cartExample.hIncrBy('cart:1234', 'total+price', 10)
+
+        const cartResult = await cartExample.exec()
+        console.log("cartResult", cartResult);
+
+        // Performance Testing
+        console.time("Without Pipelining")
+
+        for (let i = 0; i < 1000; i++) {
+            await client.set(`User_${i}`, `user_value_${i}`)
+        }
+
+        console.timeEnd("Without Pipelining")
+
+        console.time("With Pipelining")
+
+        const bigPipeline = client.multi()
+
+        for (let i = 0; i < 1000; i++) {
+            bigPipeline.set(`big_pipeline_key_${i}`, `user_pipeline_value_${i}`)
+        }
+
+        await bigPipeline.exec()
+
+        console.timeEnd("With Pipelining")
+    } catch (error) {
+        console.error('Redis operation error:', error)
+    }
+}
+
 module.exports = {
     testRedisOperations,
-    testRedisFeatures
+    testRedisFeatures,
+    redisPipelineAndTransactions
 }
