@@ -29,20 +29,9 @@ const userSchema = new mongoose.Schema({
 // middleware function receives next - next() tells Mongoose:"Middleware completed, continue saving." - If you pass an error:next(error then saving stops and error handling starts.
 // Use normal function as Arrow functions do not have their own this.
 
-userSchema.pre('save', async function (next) {
-    // if (!this.isModified('password')) {
-    //     return next()
-    // }
-
+userSchema.pre('save', async function () {
     if (this.isModified('password')) {
-        try {
-            this.password = await argon2.hash(this.password)
-            next()
-        } catch (error) {
-            return next(error)
-        }
-    } else {
-        return next()
+        this.password = await argon2.hash(this.password)
     }
 })
 
