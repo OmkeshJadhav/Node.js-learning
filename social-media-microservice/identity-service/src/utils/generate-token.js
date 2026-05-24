@@ -6,7 +6,7 @@ const generateToken = async (user) => {
     // Access Token
     const accessToken = jwt.sign(
         {
-            userId= user._id,
+            userId: user._id,
             username: user.username,
             email: user.email
         },
@@ -17,7 +17,7 @@ const generateToken = async (user) => {
     // Refresh Token
     const refreshToken = crypto.randomBytes(40).toString('hex');
     const expiresAt = new Date();
-    expiresAt.set(expiresAt.getDate() + 7);  // Refresh Token expires in 7 days
+    expiresAt.setDate(expiresAt.getDate() + 7);  // Refresh Token expires in 7 days
 
     await RefreshToken.create({
         token: refreshToken,
