@@ -86,7 +86,7 @@ const startServer = async () => {
             logger.info(`Identity Service is running on PORT ${PORT}`);
         });
     } catch (error) {
-        console.error("Server start failed -> ", error);
+        logger.error("Server start failed -> ", error);
     }
 }
 
