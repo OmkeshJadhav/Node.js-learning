@@ -52,12 +52,12 @@ const proxyOptions = {
     },
     proxyErrorHandler: ((err, res, next) => {
         logger.error(`Proxy error: ${err.message}`)
-        res.status(500).json({
-            success: false,
-            message: 'Internal Server Error',
-            error: err.message
-        })
-        // next(err);
+        // res.status(500).json({
+        //     success: false,
+        //     message: 'Internal Server Error',
+        //     error: err.message
+        // })
+        next(err);
     })
 }
 
