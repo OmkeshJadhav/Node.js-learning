@@ -46,19 +46,19 @@ const registerUser = async (req, res) => {
     } catch (error) {
         logger.error('Registration Error Occurred', error);
         res.status(500).json({
-            success: true,
+            success: false,
             message: 'Internal Server error'
         });
     }
 }
 
-// User login: validate schema -> find user -> validate password -> generate password
+// User login: validate schema -> find user -> validate password -> generate tokens
 const loginUser = async (req, res) => {
     try {
         const validateSchema = validateLogin(req.body)
 
         if (!validateSchema) {
-            logger.info('Invalid Credentials.')
+            logger.info('Invalid login payload.')
             return res.status(400).json({
                 success: false,
                 message: 'Invalid credentials.'
@@ -71,37 +71,48 @@ const loginUser = async (req, res) => {
 
         if (!user) {
             logger.info('User not found')
-            return res.json({
+            return res.status(401).json({
                 success: false,
                 message: 'User not found!'
             })
         }
 
-        const validatePassword = await user.comparePassword(password)
+        // Verify password
+        const isPasswordValid = await user.comparePassword(password)
 
-        if (!validatePassword) {
-            logger.info('Invalid Credentials.')
-            return res.status(400).json({
+        if (!isPasswordValid) {
+            logger.info('Invalid credentials')
+
+            return res.status(401).json({
                 success: false,
-                message: 'Invalid credentials.'
+                message: 'Invalid credentials'
             })
         }
 
+        // Generate tokens
         const { accessToken, refreshToken } = await generateToken(user)
 
+        // Store refresh token securely
+        res.cookie('refreshToken', refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 7 * 24 * 60 * 60 * 1000
+        })  // Always set refresh token as httpOnly cookie
+
+        // Send response
         res.status(200).json({
             success: true,
             userId: user._id,
-            username,
-            email,
+            username: user.username,
+            email: user.email,
             accessToken,
-            refreshToken
         })
 
     } catch (error) {
         logger.error('Login Error Occurred', error);
         res.status(500).json({
-            success: true,
+            success: false,
             message: 'Internal Server error'
         });
     }
