@@ -1,7 +1,9 @@
 const User = require('../models/user.models')
+const RefreshToken = require('../models/refreshToken.model')
 const generateToken = require('../utils/generate-token')
 const logger = require('../utils/logger')
 const { validateRegistration, validateLogin } = require('../utils/validate')
+
 
 // User registration
 
@@ -119,10 +121,74 @@ const loginUser = async (req, res) => {
 }
 
 // Refresh token
+const refreshTokenController = async (req, res) => {
+    logger.info('Refresh token endpoint hit...')
+    try {
+        const { refreshToken } = req.cookies;
+
+        if (!refreshToken) {
+            logger.warn('Refresh token missing!')
+            return res.status(400).json({
+                success: false,
+                message: 'Refresh token missing!'
+            })
+        }
+
+        // Get refresh token stored in db
+        const storedRefreshToken = await User.findOne({ _id: storedRefreshToken.user })
+
+        if (!storedRefreshToken || storedRefreshToken.expiresAt < new Date()) {
+            logger.info('Invalid or expired refresh token!')
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid or expired refresh token!'
+            })
+        }
+
+        // Find user using refresh token stored in db
+        const user = await User.findOne(storedRefreshToken.user)
+
+        if (!user) {
+            logger.warn('User not found!')
+            return res.status(401).json({
+                success: false,
+                message: 'User not found!'
+            })
+        }
+
+        // Generate/Rotate Token
+        const { accessToken: newAccessToken, refreshToken: newRefreshToken } = await generateToken(user)
+
+        // delete existing token from db
+        if (storedRefreshToken) {
+            await RefreshToken.deleteOne({ _id: storedRefreshToken._id })
+        }
+
+        // Store refresh token securely
+        res.cookie('refreshToken', newRefreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 7 * 24 * 60 * 60 * 1000
+        })
+
+        // Send Response
+        res.status(200).json({
+            accessToken: newAccessToken,
+        })
+    } catch (error) {
+        logger.error('Refresh Token Error Occurred', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal Server error'
+        });
+    }
+}
 
 // logout
 
 module.exports = {
     registerUser,
-    loginUser
+    loginUser,
+    refreshTokenController
 };
