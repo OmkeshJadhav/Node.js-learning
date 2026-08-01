@@ -1,0 +1,79 @@
+{
+    "compilerOptions": {
+        // JavaScript version to generate.
+        // ES2022 is suitable for modern Node.js versions.
+        "target": "ES2022",
+
+        // Module system used by the application.
+        // NodeNext follows modern Node.js ESM/CommonJS behavior.
+        "module": "NodeNext",
+
+        // How TypeScript resolves imported modules.
+        // NodeNext follows Node.js's module resolution rules.
+        "moduleResolution": "NodeNext",
+
+        // Directory containing your TypeScript source code.
+        // Example: src/index.ts, src/app.ts
+        "rootDir": "./src",
+
+        // Directory where compiled JavaScript files will be generated.
+        // Example: src/index.ts -> dist/index.js
+        "outDir": "./dist",
+
+        // Enables strict type checking.
+        // Recommended for most TypeScript projects.
+        "strict": true,
+
+        // Error out on implied 'any' types
+        "noImplicitAny": true,
+
+        // prevent 'null' or 'undefined' type
+        "strictNullChecks": true,
+
+        // Improves compatibility between CommonJS and ES module imports.
+        // Allows cleaner imports from CommonJS packages.
+        "esModuleInterop": true,
+
+        // Ensures file names are referenced with the correct casing.
+        // Helps prevent problems when deploying to Linux.
+        "forceConsistentCasingInFileNames": true,
+
+        // Skips type checking of declaration files (.d.ts)
+        // from dependencies, making compilation faster.
+        "skipLibCheck": true,
+
+        // Generates source map files.
+        // Helps debuggers map compiled JavaScript back to TypeScript.
+        "sourceMap": true,
+
+        // Generates .d.ts declaration files.
+        // Useful when creating reusable TypeScript libraries/packages.
+        // Usually not required for a normal backend application.
+        "declaration": true,
+
+        // Reports variables that are declared but never used.
+        "noUnusedLocals": true,
+
+        // Reports function parameters that are declared but never used.
+        "noUnusedParameters": true,
+
+        // Reports functions where not every code path returns a value.
+        "noImplicitReturns": true,
+
+        // Allows importing JSON files directly.
+        // Example: import config from "./config.json";
+        "resolveJsonModule": true
+    },
+    // Specifies which files TypeScript should include.
+    // Includes all .ts files inside src and its subdirectories.
+    "include": [
+        "src/**/*"
+    ],
+    // Specifies files/directories TypeScript should ignore.
+    // node_modules contains dependencies.
+    // dist contains already-compiled output.
+    "exclude": [
+        "node_modules",
+        "dist"
+    ]
+}
