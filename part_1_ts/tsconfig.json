@@ -62,7 +62,10 @@
 
         // Allows importing JSON files directly.
         // Example: import config from "./config.json";
-        "resolveJsonModule": true
+        "resolveJsonModule": true,
+
+        // 
+        "types": ["node"]
     },
     // Specifies which files TypeScript should include.
     // Includes all .ts files inside src and its subdirectories.
