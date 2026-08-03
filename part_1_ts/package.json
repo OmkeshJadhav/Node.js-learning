@@ -5,7 +5,8 @@
   "main": "index.ts",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "1": "tsx src/01-core-modules/01-process-object.ts"
   },
   "keywords": [],
   "author": "",
