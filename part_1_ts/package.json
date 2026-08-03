@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "1": "tsx src/01-core-modules/01-process-object.ts"
+    "1": "tsx src/01-core-modules/01-process-object.ts",
+    "2": "tsx src/01-core-modules/02-crypto-module.ts"
   },
   "keywords": [],
   "author": "",
