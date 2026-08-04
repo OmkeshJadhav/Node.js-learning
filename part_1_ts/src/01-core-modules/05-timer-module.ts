@@ -50,7 +50,7 @@ const runSetImmediateExample = ():void => {
     })
 }
 
-// Promise based timers - Useful when you don't want to use setTimout
+// Promise based timers - Useful when you don't want to use setTimout. Position will depend on the duration of the sleep
 const runPromiseTimerExample = async():Promise<void> => {
     console.log(`12. Waiting for promise based timer.`)
 
