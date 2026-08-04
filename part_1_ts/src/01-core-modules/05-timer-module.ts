@@ -1,3 +1,4 @@
+import {setTimeout as sleep} from 'node:timers/promises'
 
 // setTimeout: Run the code after some delay of specified time
 function runSetTimeoutExample(): void {
@@ -49,6 +50,15 @@ const runSetImmediateExample = ():void => {
     })
 }
 
+// Promise based timers - Useful when you don't want to use setTimout
+const runPromiseTimerExample = async():Promise<void> => {
+    console.log(`12. Waiting for promise based timer.`)
+
+    await sleep(5500)
+
+    console.log(`13. Promise based timer finishes after 5.5 seconds.`)
+}
+
 function runTimerDemo(): void {
     runSetTimeoutExample()
     runClearTimeoutExample()
@@ -56,4 +66,6 @@ function runTimerDemo(): void {
     runSetImmediateExample()
 }
 
+
 runTimerDemo()
+runPromiseTimerExample()
