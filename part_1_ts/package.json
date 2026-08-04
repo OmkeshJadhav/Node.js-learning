@@ -9,7 +9,8 @@
     "1": "tsx src/01-core-modules/01-process-object.ts",
     "2": "tsx src/01-core-modules/02-crypto-module.ts",
     "3": "tsx src/01-core-modules/03-os-module.ts",
-    "4": "tsx src/01-core-modules/04-path-module.ts"
+    "4": "tsx src/01-core-modules/04-path-module.ts",
+    "5": "tsx src/01-core-modules/05-timer-module.ts"
     
   },
   "keywords": [],
