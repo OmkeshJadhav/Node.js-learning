@@ -45,7 +45,7 @@ const findUserWithCallback = (
 
 findUserWithCallback(2, (error, user) => {
     if (error) {
-        console.log('Callback error', error)
+        console.log('Callback error', error.message)
         return;
     }
 
@@ -53,7 +53,29 @@ findUserWithCallback(2, (error, user) => {
     return;
 })
 
-// Promise
 
+// Promise
+const findUserWithPromise = (userId: number): Promise<User> => {
+    return new Promise((resolve, reject) => {
+        setTimeout(() => {
+            const user = users.find(currentUser => currentUser.id == userId)
+
+            if(!user){
+                reject(new Error(`User with id ${userId} does not exists.`))
+                return;
+            }
+
+            resolve(user)
+        }, 1000)
+    })
+}
+
+findUserWithPromise(20)
+    .then((user) => {
+        console.log('Promise result: ', user?.id, user?.name, user?.role)
+    })
+    .catch((error) => {
+        console.log("Promise Error: ", error.message)
+    })
 
 // async-await
