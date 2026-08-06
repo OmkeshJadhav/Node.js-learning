@@ -70,7 +70,7 @@ const findUserWithPromise = (userId: number): Promise<User> => {
     })
 }
 
-findUserWithPromise(20)
+findUserWithPromise(2)
     .then((user) => {
         console.log('Promise result: ', user?.id, user?.name, user?.role)
     })
