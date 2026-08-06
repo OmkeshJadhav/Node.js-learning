@@ -79,3 +79,14 @@ findUserWithPromise(2)
     })
 
 // async-await
+const findUserWithAsyncAwait = async(userId: number): Promise<void> => {
+    try {
+        const user = await findUserWithPromise(userId);
+        console.log('Async-Await result: ', user)
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknow Error'
+        console.log(errorMessage)
+    }
+}
+
+findUserWithAsyncAwait(2)
