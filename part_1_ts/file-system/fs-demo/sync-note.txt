@@ -1,0 +1,1 @@
+This is the content create using Sync file systemThis content is appended using appendFileSync
