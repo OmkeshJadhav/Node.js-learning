@@ -14,7 +14,8 @@
     "6": "tsx src/01-core-modules/06-callback-promise-async-await.ts",
     "7": "tsx src/01-core-modules/07-file-syste.ts",
     "8": "tsx src/01-core-modules/08-buffers.ts",
-    "9": "tsx src/01-core-modules/09-url-module.ts"
+    "9": "tsx src/01-core-modules/09-url-module.ts",
+    "10": "tsx src/01-core-modules/10-event-emitter.ts"
     
   },
   "keywords": [],
