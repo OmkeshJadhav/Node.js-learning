@@ -1,6 +1,7 @@
 import path from 'node:path'
 import process from 'node:process'
-import fs, { write } from 'node:fs'
+import fs from 'node:fs'
+import fsPromise from 'node:fs/promises'
 
 // fs: create/delete folder, create/write/read/delete files, check file information
 // 3 Ways to work with fs: 1) sync APIs 2) Callback APIs 3) Promise APIs
@@ -103,6 +104,33 @@ const runCallbackExample = (): Promise<FileInfo> => {
     })
 }
 
+// 3) Promise
+// Need to import fsPromise from 'node:fs/promises'
+
+const runPromiseExample = async (): Promise<FileInfo> => {
+    await fsPromise.writeFile(
+        PROMISE_FILE_PATH,
+        'Content added using Promise fs',
+        'utf-8'
+    )
+
+    await fsPromise.appendFile(
+        PROMISE_FILE_PATH,
+        '\nContent appended using Promise fs',
+        'utf-8'
+    )
+
+    const content = await fsPromise.readFile(PROMISE_FILE_PATH, 'utf-8')
+
+    const stat = await fsPromise.stat(PROMISE_FILE_PATH)
+
+    return {
+        style: 'promise',
+        content,
+        fileName: path.basename(PROMISE_FILE_PATH),
+        sizeInBytes: stat.size
+    }
+}
 
 const main = async (): Promise<void> => {
     try {
@@ -110,8 +138,9 @@ const main = async (): Promise<void> => {
 
         const syncResult = runSyncExample();
         const callbackResult = await runCallbackExample()
+        const promiseResult = await runPromiseExample()
 
-        console.log([syncResult, callbackResult]);
+        console.log([syncResult, callbackResult, promiseResult]);
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown Error'
         console.log('FS Error', errorMessage)
