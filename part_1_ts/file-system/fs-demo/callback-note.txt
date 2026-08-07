@@ -1,0 +1,2 @@
+Content is written using callback fs
+This content is appended using appendfile to the callback content.
