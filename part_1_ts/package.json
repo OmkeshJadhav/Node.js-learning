@@ -15,7 +15,8 @@
     "7": "tsx src/01-core-modules/07-file-system.ts",
     "8": "tsx src/01-core-modules/08-buffers.ts",
     "9": "tsx src/01-core-modules/09-url-module.ts",
-    "10": "tsx src/01-core-modules/10-event-emitter.ts"
+    "10": "tsx src/01-core-modules/10-event-emitter.ts",
+    "11": "tsx src/01-core-modules/11-streams.ts"
     
   },
   "keywords": [],
