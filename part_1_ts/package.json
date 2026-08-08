@@ -12,7 +12,7 @@
     "4": "tsx src/01-core-modules/04-path-module.ts",
     "5": "tsx src/01-core-modules/05-timer-module.ts",
     "6": "tsx src/01-core-modules/06-callback-promise-async-await.ts",
-    "7": "tsx src/01-core-modules/07-file-syste.ts",
+    "7": "tsx src/01-core-modules/07-file-system.ts",
     "8": "tsx src/01-core-modules/08-buffers.ts",
     "9": "tsx src/01-core-modules/09-url-module.ts",
     "10": "tsx src/01-core-modules/10-event-emitter.ts"

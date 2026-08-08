@@ -60,7 +60,7 @@ appEvents.once("server:start", () => {
 function registerUser(): void {
 
     appEvents.emit("server:start");
-    appEvents.emit("server:start");   // Event will be listened only once as 'once' method is used
+    appEvents.emit("server:start");   // Event will be listened only once as 'once' method is used by listener
 
     const user = {
         id: 1,
