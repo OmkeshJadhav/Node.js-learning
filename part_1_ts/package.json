@@ -19,7 +19,8 @@
     "11": "tsx src/01-core-modules/11-streams.ts",
     "02_01": "tsx src/02-node-http/01-http-server-concepts.ts",
     "02_02": "tsx src/02-node-http/02-routing.ts",
-    "02_03": "tsx src/02-node-http/03-reading-body.ts"
+    "02_03": "tsx src/02-node-http/03-reading-body.ts",
+    "02_04": "tsx src/02-node-http/04-json-response.ts"
     
   },
   "keywords": [],
