@@ -45,16 +45,17 @@ const fetchExternalData = async (): Promise<void> => {
             signal: controller.signal
         })
 
-        if(!response.ok){
-            console.log('Failed to fetch data.')
+        if (!response.ok) {
+            throw new Error(`HTTP error: ${response.status}`)
+
         }
 
-        const rawData = (await response.json) as PlaceholderUser
+        const rawData = (await response.json()) as PlaceholderUser
 
-        dataTransform(rawData)
+        console.log(dataTransform(rawData))
 
     } catch (error) {
-        if(error instanceof Error && error.name === "AbortError"){
+        if (error instanceof Error && error.name === "AbortError") {
             console.log(error)
         }
 
