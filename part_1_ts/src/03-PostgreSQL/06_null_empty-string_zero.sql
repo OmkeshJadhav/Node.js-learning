@@ -32,3 +32,15 @@ SELECT * FROM basics.value_examples WHERE bio <> '';
 -- zero and not zero
 SELECT * FROM basics.value_examples WHERE age = 0;
 SELECT * FROM basics.value_examples WHERE age <> 0;
+
+
+-- | What you're checking    | Operator      | Example                |
+-- | ----------------------- | ------------- | ---------------------- |
+-- | NULL                    | `IS NULL`     | `nickname IS NULL`     |
+-- | Not NULL                | `IS NOT NULL` | `nickname IS NOT NULL` |
+-- | String/value equality   | `=`           | `bio = ''`             |
+-- | String/value inequality | `<>` or `!=`  | `bio <> ''`            |
+-- | Number equality         | `=`           | `age = 0`              |
+-- | Number inequality       | `<>` or `!=`  | `age <> 0`             |
+
+-- NULL is special is that you cannot use = to check NULL
