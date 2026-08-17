@@ -44,7 +44,7 @@ CREATE TABLE posts(
 CREATE TABLE comments(
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     post_id UUID REFERENCES posts(id),
-    -- user_id UUID REFERENCES users(id),
+    user_id UUID REFERENCES users(id),
     body VARCHAR(100) NOT NULL
 );
 
