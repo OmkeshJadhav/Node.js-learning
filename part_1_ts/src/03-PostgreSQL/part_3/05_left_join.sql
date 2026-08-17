@@ -29,17 +29,3 @@ FROM posts
 LEFT JOIN comments
     ON comments.post_id = posts.id
 WHERE comments.id IS NULL;
-
-
--- ============================================================
--- MANY-TO-MANY JOIN
--- ============================================================
-
-SELECT
-    posts.title,
-    tags.name AS tag
-FROM posts
-JOIN post_tags
-    ON post_tags.post_id = posts.id
-JOIN tags
-    ON tags.id = post_tags.tag_id;
