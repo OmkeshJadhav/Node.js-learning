@@ -107,16 +107,23 @@ WHERE name = 'Rahul';
 -- INSERT COMMENTS
 -- ============================================================
 
-INSERT INTO comments (post_id, body)
-SELECT id, 'Very clear explanation.'
-FROM posts
-WHERE title = 'PostgreSQL Joins Explained';
+INSERT INTO comments (post_id, body, user_id)
+SELECT id, 'Very clear explanation.', u.id
+FROM posts AS p
+JOIN users AS u
+    ON u.name = 'Rahul'
+WHERE p.title = 'PostgreSQL Joins Explained';
 
 
-INSERT INTO comments (post_id, body)
-SELECT id, 'Please add more examples.'
-FROM posts
-WHERE title = 'Backend APIs with PostgreSQL';
+INSERT INTO comments (post_id, body, user_id)
+SELECT
+    p.id,
+    'Please add more examples.',
+    u.id
+FROM posts AS p
+JOIN users AS u
+    ON u.name = 'Ananya'
+WHERE p.title = 'Backend APIs with PostgreSQL';
 
 
 -- ============================================================
