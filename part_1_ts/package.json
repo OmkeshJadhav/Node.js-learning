@@ -4,8 +4,6 @@
   "description": "",
   "main": "index.ts",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "test": "echo \"Error: no test specified\" && exit 1",
     "1": "tsx src/01-core-modules/01-process-object.ts",
     "2": "tsx src/01-core-modules/02-crypto-module.ts",
     "3": "tsx src/01-core-modules/03-os-module.ts",
@@ -17,20 +15,25 @@
     "9": "tsx src/01-core-modules/09-url-module.ts",
     "10": "tsx src/01-core-modules/10-event-emitter.ts",
     "11": "tsx src/01-core-modules/11-streams.ts",
+    "dev": "tsx watch src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1",
     "02_01": "tsx src/02-node-http/01-http-server-concepts.ts",
     "02_02": "tsx src/02-node-http/02-routing.ts",
     "02_03": "tsx src/02-node-http/03-reading-body.ts",
     "02_04": "tsx src/02-node-http/04-json-response.ts",
     "02_05": "tsx src/02-node-http/05-external-api-calls.ts"
-    
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^26.1.2",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
   }
 }
