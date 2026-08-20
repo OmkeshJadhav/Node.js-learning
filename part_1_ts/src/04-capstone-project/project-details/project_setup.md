@@ -104,3 +104,29 @@ export const errorHandler = (
     });
 }
 ```
+- Add errorHandler middleware in app.ts as app.use(errorHandler)
+
+
+## Not Found Middleware
+- Create notFound.ts middleware
+```
+import { Request, Response } from "express";
+
+export const notFound = (_req: Request, res: Response): void => {
+    res.status(404).json({
+        success: false,
+        message: 'Route not found'
+    })
+}
+```
+
+
+## express.urlencoded
+- Middleware to parse incoming HTML form submission
+- Parsesincoming requests with URL-encoded payloads.
+```
+    app.use(express.urlencoded({extended: true}))
+```
+
+
+## CORS
