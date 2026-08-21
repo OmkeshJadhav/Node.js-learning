@@ -129,4 +129,21 @@ export const notFound = (_req: Request, res: Response): void => {
 ```
 
 
-## CORS
+## CORS: Cross Origin Resource Sharing
+- CORS is a browser enforced security mechanism
+- CORS prevents a web page from one domain from making request to API hosted on a completely different domains unless server explicitly grants permission
+- Create cors-config.ts in config folder
+    + Create origin function, methods allowed, allowedHeaders, exposedHeaders, credentials, preflightContinue, maxAge, optionsSuccessStatus
+        - origin -> this will tell that which origin are allowed to access your APIs
+        - methods -> which methods are allowed
+        - allowedHeaders -> which headers are allowed
+        - exposedHeaders -> expose all the headers that can be exposed to the client
+        - credentials -> Enables support for cookies and authorization
+        - preflightContinue -> Pass the CORS preflight response to the next handler
+        - maxAge -> cache the preflight responses for the mentioned time (in seconds) - avoid sending options requests multiple times
+        - optionsSuccessStatus -> Provide a status code to use for successful OPTIONS requests 
+- Import cors-config.ts in app.ts and then use as middleware
+```
+app.use(configureCors())
+```
+
