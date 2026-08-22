@@ -6,13 +6,15 @@ import { apiRouter } from './routes';
 
 export const createApp = () => {
     const app = express();
+    
     app.use(configureCors())
+
     app.use(express.json());
     app.use(express.urlencoded({extended: true}))
 
     app.use('/api', apiRouter)
-
     app.use(notFound);
+
     app.use(errorHandler);
 
     return app
