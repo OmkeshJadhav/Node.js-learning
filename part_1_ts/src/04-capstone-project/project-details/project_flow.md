@@ -47,7 +47,7 @@ export const env = {
 
 ## app.ts 
 - Create app.ts file at the root of src
-- app.ts is entry point for express and express related logic
+- app.ts is entry point for express and express related logic and sub-base file for the project
 - Express will help us to create web server
 - Create creatApp function and inside it use app.use middleware with express.json()
     - app.use(express.json()) return middleware that only parses json and only looks at request where Content-Type header matches the type option
@@ -59,6 +59,25 @@ export const creatApp = () => {
 
     app.use(express.json());
 }
+
+return app;
+```
+
+
+## server.ts
+- Create server.ts file at the root level of src
+- This is the base file of the project
+- It executes createApp function of app.ts and listen to the server
+```
+import { createApp } from "./app";
+import { env } from "./config/env";
+import { logger } from "./lib/logger";
+
+const app = createApp();
+
+app.listen(env.port, () => {
+    logger.info(`Server is running on PORT ${env.port})`)
+});
 ```
 
 ## logger configuration  
@@ -145,5 +164,59 @@ export const notFound = (_req: Request, res: Response): void => {
 - Import cors-config.ts in app.ts and then use as middleware
 ```
 app.use(configureCors())
+```
+
+
+## routes
+### Creating route
+- create route with names like 'health.route.ts' for a specific api route in routes folder
+- import Router from Express
+- Assign the route variable to Router function and then used http methods on this variable
+```
+import { Router } from 'express';
+
+export const healthRouter = Router()
+
+healthRouter.get('/health', (_req, res) => {
+    res.status(200).json({
+        success: true,
+        message: 'Health route is working.'
+    });
+});
+```
+### Plugging all routes in single entry file
+- In routes folder, create an entry file index.ts
+- In this, we will combine all the routes of the application to plug all the routes in one place as middleware by importing all routes in this file.
+```
+import { Router } from 'express'
+import { healthRouter } from './health.route';
+
+export const apiRouter = Router()
+
+apiRouter.use(healthRouter);
+```
+
+### Using apiRouter in app.ts as middleware
+- Now use apiRouter from index.ts in main app.ts as middleware - after adding '/api' as prefix
+```
+import express from 'express'
+import { errorHandler } from './middlewares/errorHandler';
+import { notFound } from './middlewares/notFound';
+import { configureCors } from './config/cors-config';
+import { apiRouter } from './routes';
+
+export const createApp = () => {
+    const app = express();
+    app.use(configureCors())
+    app.use(express.json());
+    app.use(express.urlencoded({extended: true}))
+
+    app.use('/api', apiRouter)
+
+    app.use(notFound);
+    app.use(errorHandler);
+
+    return app
+}
 ```
 
