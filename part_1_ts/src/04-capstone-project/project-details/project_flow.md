@@ -80,6 +80,14 @@ app.listen(env.port, () => {
 });
 ```
 
+
+## Update scripts in package.json
+- For "dev" script - "tsx watch src/server.ts" - watch/runs base file of the project src/server.ts
+- For "build" - "tsc" - Compiles .ts  .js into dist
+- For "start" - "node dist/server.js" - Runs the compiled production server in dist folder using node
+- Also update "main" in package.json to the compiled production entry point in dist folder
+
+
 ## logger configuration  
 - Add logger.ts to lib folder
 - Create logger function using pino
@@ -99,6 +107,7 @@ export const logger = pino({
     }
 })
 ```
+
 
 ## Global Error Handler  
 - Create errorHandler.ts in middleware folder
@@ -168,6 +177,7 @@ app.use(configureCors())
 
 
 ## routes
+
 ### Creating route
 - create route with names like 'health.route.ts' for a specific api route in routes folder
 - import Router from Express
@@ -184,6 +194,7 @@ healthRouter.get('/health', (_req, res) => {
     });
 });
 ```
+
 ### Plugging all routes in single entry file
 - In routes folder, create an entry file index.ts
 - In this, we will combine all the routes of the application to plug all the routes in one place as middleware by importing all routes in this file.
