@@ -233,3 +233,6 @@ export const createApp = () => {
 
 
 ## Docker
+- What is docker
+- What problems does it solve
+- Docker Images, container, Columes
