@@ -236,5 +236,25 @@ export const createApp = () => {
 - What is docker
     - Docker is an open-source platform that uses open source level virtualization to deliver software in packages called containers.
     - It allows to bundle an application with all its required libraries, dependencies and configurations into a single standardized unit.
+- Docker trio
+    - Docker trio: Docker engine, docker daemon, docker CLI
+        - Docker engine: 
+            - Core containerization tech
+            - Client server application
+            - Long running daemon process
+            - APIs
+            - CLI client
+        - Docker Daemon
+            - Long running server that will do the actual work
+            - Listens for Docker API requests
+            - Build images
+            - Create and runs containers
+            - Manages networks
+            - Manages volume
+        - Docker CLI
+            - It gives command line interface or controlled surface and not actual execution engine
+            - Docker run, docker build, docker blogs
+        - Docker API
+            - Interface used for communication between CLI and Docker Daemon
 - What problems does it solve
 - Docker Images, container, Columes
