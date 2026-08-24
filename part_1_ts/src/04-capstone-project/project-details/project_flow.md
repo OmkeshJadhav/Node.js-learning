@@ -257,4 +257,13 @@ export const createApp = () => {
         - Docker API
             - Interface used for communication between CLI and Docker Daemon
 - What problems does it solve
+    - Solves 'work on my machine' problem
+        - OS Difference - Windows, MacOS, Linux
+        - Installed runtime versions - Node 18, Node 20, Node 22
+        - Package manager behaviour - Global Manager installed vs not installed
+        - Missing system library - 
+        - env related issue - normal .env vs manually written env
+        - file path issue
+        - permission related issues
+
 - Docker Images, container, Columes
