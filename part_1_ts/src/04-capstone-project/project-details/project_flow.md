@@ -234,5 +234,7 @@ export const createApp = () => {
 
 ## Docker
 - What is docker
+    - Docker is an open-source platform that uses open source level virtualization to deliver software in packages called containers.
+    - It allows to bundle an application with all its required libraries, dependencies and configurations into a single standardized unit.
 - What problems does it solve
 - Docker Images, container, Columes
