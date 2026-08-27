@@ -269,3 +269,4 @@ export const createApp = () => {
 - Docker Images, container, Columes
 - Single stage dockerization
 - Docker compose
+- Multi-stage Dockerization
