@@ -270,3 +270,4 @@ export const createApp = () => {
 - Single stage dockerization
 - Docker compose
 - Multi-stage Dockerization
+- VPS Deployment without CI/CD
