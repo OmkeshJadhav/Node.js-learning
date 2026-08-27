@@ -267,3 +267,4 @@ export const createApp = () => {
         - permission related issues
 
 - Docker Images, container, Columes
+- Single stage dockerization
