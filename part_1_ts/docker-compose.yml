@@ -1,11 +1,11 @@
 services:
   postgres:
-    image: postgres:16-alpine
-    container-name: nodejs-capstone-project
+    image: postgres:18-alpine
+    container_name: nodejs-capstone-project
     restart: unless-stopped
 
     ports:
-      - "5432:5435"
+      - "5444:5435"
 
     environment:
       POSTGRES_USER: postgres
@@ -13,7 +13,7 @@ services:
       POSTGRES_DB: nodejs-capstone
 
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
 
 volumes:
   postgres_data:
