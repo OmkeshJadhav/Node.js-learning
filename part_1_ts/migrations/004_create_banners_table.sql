@@ -1,5 +1,5 @@
 CREATE TABLE banners(
-    id UUID PRIMARY KEY DEFAULT get_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
     image_url TEXT NOT NULL,
 
@@ -8,4 +8,4 @@ CREATE TABLE banners(
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-)Í
+);
