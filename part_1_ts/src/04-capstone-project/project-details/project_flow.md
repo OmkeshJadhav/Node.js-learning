@@ -352,4 +352,10 @@
 
     ```
 
-## 
+## Migrations
+- Created migrations folder at the rot
+- In migrations folder, created 4 sql files
+    - 001_enable_pgcryto.sql
+    - 002_create_user_table.sql: id, email, password_hash, google_id, role, created_at, updated_at
+    - 003_create_support_tasks_table.sql: id, title, status, user_id
+    - 004_create_banners_table.sql: id, image_url, cloudinary_public_id, created_at, updated_at
