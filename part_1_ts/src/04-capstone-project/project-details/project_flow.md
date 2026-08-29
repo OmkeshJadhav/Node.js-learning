@@ -287,7 +287,7 @@
     ```
 
 
-## routes
+## ROUTES
 
 ### Creating route
 - create route with names like 'health.route.ts' for a specific api route in routes folder
@@ -327,8 +327,8 @@
         - whenever a frontend/client request starts with /api, Express forwards that request to apiRouter for further routing.
 
 
-## Docker
-- 
+## DOCKER
+- Create docker-compose.yml at the root.
     ```
     services:
     postgres:
@@ -351,11 +351,64 @@
     postgres_data:
 
     ```
+- In .env, add DATABASE_URL variable
+    ```
+    postgresql://postgres:postgres@localhost:5444/nodejs-capstone
+           │          │       │       │        │        │
+           │          │       │       │        │        └── Database
+           │          │       │       │        └── Port
+           │          │       │       └── Host
+           │          │       └── Password
+           │          └── Username
+           └── Database protocol
+    ```
 
-## Migrations
-- Created migrations folder at the rot
+
+## CUSTOM MIGRATIONS
+
+### Create Tables
+- Created migrations folder at the root
 - In migrations folder, created 4 sql files
     - 001_enable_pgcryto.sql
     - 002_create_user_table.sql: id, email, password_hash, google_id, role, created_at, updated_at
     - 003_create_support_tasks_table.sql: id, title, status, user_id
     - 004_create_banners_table.sql: id, image_url, cloudinary_public_id, created_at, updated_at
+
+### Create PostgreSQL connection pool 
+- Install pg package and its types
+    ```
+    npm install pg
+    npm i --save-dev @types/pg
+    ```
+    - pg is a postgres client for Node.js. It acts as medium that allows Node.js app to connect, query and interact with postgres DB. 
+    - It allows to write raw SQL directly in JS/TS code.
+- Create db.ts in src/lib/db.ts 
+    ```
+    import { Pool } from 'pg'
+    import { env } from '../config/env'
+
+    export const pool = new Pool({
+        connectionString: env.databaseUrl
+    })
+    ```
+    - creates a PostgreSQL connection pool that your Node.js application can use to communicate with the database.
+    - Instead of opening a new database connection every time you execute a query, the pool keeps connections available and reuses them.
+    - Why use a Pool instead of creating a connection every time? 
+        - Imagine your application receives 100 requests:
+            ```
+            Request 1 ──┐
+            Request 2 ──┤
+            Request 3 ──┤
+            Request 4 ──┤
+                ...     ├──→ Connection Pool ──→ PostgreSQL
+            Request 100 ┘
+            ```
+        - Without a pool
+            ```
+            Request → Create connection → Query → Close connection
+            Request → Create connection → Query → Close connection
+            Request → Create connection → Query → Close connection
+            ```
+
+### Custom Migration
+- Create migrate.ts in scripts folder or db folder: /src/scripts/migrate.ts or /src/db/migrate.ts
