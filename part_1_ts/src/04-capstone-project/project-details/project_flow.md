@@ -233,41 +233,27 @@ export const createApp = () => {
 
 
 ## Docker
-- What is docker
-    - Docker is an open-source platform that uses open source level virtualization to deliver software in packages called containers.
-    - It allows to bundle an application with all its required libraries, dependencies and configurations into a single standardized unit.
-- Docker trio
-    - Docker trio: Docker engine, docker daemon, docker CLI
-        - Docker engine: 
-            - Core containerization tech
-            - Client server application
-            - Long running daemon process
-            - APIs
-            - CLI client
-        - Docker Daemon
-            - Long running server that will do the actual work
-            - Listens for Docker API requests
-            - Build images
-            - Create and runs containers
-            - Manages networks
-            - Manages volume
-        - Docker CLI
-            - It gives command line interface or controlled surface and not actual execution engine
-            - Docker run, docker build, docker blogs
-        - Docker API
-            - Interface used for communication between CLI and Docker Daemon
-- What problems does it solve
-    - Solves 'work on my machine' problem
-        - OS Difference - Windows, MacOS, Linux
-        - Installed runtime versions - Node 18, Node 20, Node 22
-        - Package manager behaviour - Global Manager installed vs not installed
-        - Missing system library - 
-        - env related issue - normal .env vs manually written env
-        - file path issue
-        - permission related issues
+```
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: nodejs-capstone-project
+    restart: unless-stopped
 
-- Docker Images, container, Columes
-- Single stage dockerization
-- Docker compose
-- Multi-stage Dockerization
-- VPS Deployment without CI/CD
+    ports:
+      - "5444:5435"
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: nodejs-capstone
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+
+```
+
+## 
