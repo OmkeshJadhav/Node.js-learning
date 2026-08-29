@@ -2,74 +2,73 @@
 + npm init -y
 + node_modules
 + package.json & package-lock.json
-```
-{
-  "name": "capstone-project",
-  "version": "1.0.0",
-  "description": "",
-  "main": "dist/server.js",
-  "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js",
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "pino": "^10.3.1"
-  },
-  "devDependencies": {
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.6",
-    "@types/node": "^26.1.2",
-    "pino-pretty": "^13.1.3",
-    "tsx": "^4.23.1",
-    "typescript": "^7.0.2"
-  }
-}
-```
-+ tsconfig.json  
-```
-{
-    "compilerOptions": {
-        "target": "ES2022",
-        "module": "NodeNext",
-        "moduleResolution": "NodeNext",
-        "rootDir": "./src",
-        "outDir": "./dist",
-        "strict": true,
-        "noImplicitAny": true,
-        "strictNullChecks": true,
-        "esModuleInterop": true,
-        "forceConsistentCasingInFileNames": true,
-        "skipLibCheck": true,
-        "sourceMap": true,
-        "declaration": true,
-        "noUnusedLocals": true,
-        "noUnusedParameters": true,
-        "noImplicitReturns": true,
-        "resolveJsonModule": true,
-        "types": ["node"]
+    ```
+    {
+    "name": "capstone-project",
+    "version": "1.0.0",
+    "description": "",
+    "main": "dist/server.js",
+    "scripts": {
+        "dev": "tsx watch src/server.ts",
+        "build": "tsc",
+        "start": "node dist/server.js",
     },
-    "include": [
-        "src/**/*"
-    ],
-    "exclude": [
-        "node_modules",
-        "dist"
-    ]
-}
-```
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "type": "commonjs",
+    "dependencies": {
+        "cors": "^2.8.6",
+        "dotenv": "^17.4.2",
+        "express": "^5.2.1",
+        "pino": "^10.3.1"
+    },
+    "devDependencies": {
+        "@types/cors": "^2.8.19",
+        "@types/express": "^5.0.6",
+        "@types/node": "^26.1.2",
+        "pino-pretty": "^13.1.3",
+        "tsx": "^4.23.1",
+        "typescript": "^7.0.2"
+    }
+    }
+    ```
++ tsconfig.json  
+    ```
+    {
+        "compilerOptions": {
+            "target": "ES2022",
+            "module": "NodeNext",
+            "moduleResolution": "NodeNext",
+            "rootDir": "./src",
+            "outDir": "./dist",
+            "strict": true,
+            "noImplicitAny": true,
+            "strictNullChecks": true,
+            "esModuleInterop": true,
+            "forceConsistentCasingInFileNames": true,
+            "skipLibCheck": true,
+            "sourceMap": true,
+            "declaration": true,
+            "noUnusedLocals": true,
+            "noUnusedParameters": true,
+            "noImplicitReturns": true,
+            "resolveJsonModule": true,
+            "types": ["node"]
+        },
+        "include": [
+            "src/**/*"
+        ],
+        "exclude": [
+            "node_modules",
+            "dist"
+        ]
+    }
+    ```
 
 ## Folder Structure 
 - Create src folder
 - Create server.ts as entry file inside src
-- Create .env at the root level
 - Install express and types of express
     ```
         npm i express
@@ -129,17 +128,17 @@ return app;
 - Create server.ts file at the root level of src
 - This is the base file of the project
 - It executes createApp function of app.ts and listen to the server
-```
-import { createApp } from "./app";
-import { env } from "./config/env";
-import { logger } from "./lib/logger";
+    ```
+    import { createApp } from "./app";
+    import { env } from "./config/env";
+    import { logger } from "./lib/logger";
 
-const app = createApp();
+    const app = createApp();
 
-app.listen(env.port, () => {
-    logger.info(`Server is running on PORT ${env.port})`)
-});
-```
+    app.listen(env.port, () => {
+        logger.info(`Server is running on PORT ${env.port})`)
+    });
+    ```
 
 
 ## Update scripts in package.json
@@ -175,44 +174,44 @@ export const logger = pino({
 - Create errorHandler function
 - Function should receive - err: Error, _req: Request, res: Response, _next: NextFunction - as arguments and return void
 - Inside the function log the error and send response
-```
-import { NextFunction, Request, Response } from "express";
-import { logger } from "../lib/logger";
+    ```
+    import { NextFunction, Request, Response } from "express";
+    import { logger } from "../lib/logger";
 
-export const errorHandler = (
-    err: Error,
-    _req: Request,
-    res: Response,
-    _next: NextFunction
-): void => {
-    logger.error({err}, 'Unhandled Error');
+    export const errorHandler = (
+        err: Error,
+        _req: Request,
+        res: Response,
+        _next: NextFunction
+    ): void => {
+        logger.error({err}, 'Unhandled Error');
 
-    res.status(500).json({
-        success: false,
-        message: 'Internal Server Error'
-    });
-}
-```
+        res.status(500).json({
+            success: false,
+            message: 'Internal Server Error'
+        });
+    }
+    ```
 - Add errorHandler middleware in app.ts as app.use(errorHandler)
 
 
 ## Not Found Middleware
 - Create notFound.ts middleware
-```
-import { Request, Response } from "express";
+    ```
+    import { Request, Response } from "express";
 
-export const notFound = (_req: Request, res: Response): void => {
-    res.status(404).json({
-        success: false,
-        message: 'Route not found'
-    })
-}
-```
+    export const notFound = (_req: Request, res: Response): void => {
+        res.status(404).json({
+            success: false,
+            message: 'Route not found'
+        })
+    }
+    ```
 
 
 ## express.urlencoded
-- Middleware to parse incoming HTML form submission
-- Parsesincoming requests with URL-encoded payloads.
+- Middleware function in Express to parse incoming HTML form submission
+- Parses incoming requests with URL-encoded payloads.
 ```
     app.use(express.urlencoded({extended: true}))
 ```
