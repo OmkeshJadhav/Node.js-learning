@@ -497,3 +497,56 @@
         })
         .finally(() => pool.end());
     ```
+- What runMigration() function actually does ?
+    1. Read SQL file
+    2. Get a DB connection
+    3. BEGIN transaction
+    4. Execute SQL
+    5. Record migration as completed
+    6. COMMIT
+    7. If anything fails → ROLLBACK
+    8. Return connection to pool
+    
+- Complete process
+    ```
+            npm run migrate
+                    │
+                    ↓
+            ┌──────────────────┐
+            │ Create migrations│
+            │      table       │
+            └────────┬─────────┘
+                    ↓
+            Check executed files
+                    │
+                    ↓
+            Read migrations/
+                    │
+                    ↓
+            Find pending files
+                    │
+                    ↓
+            ┌────────────────┐
+            │ 001_users.sql  │
+            │ 002_posts.sql  │
+            │ 003_comments   │
+            └───────┬────────┘
+                    ↓
+            Run each pending
+                migration
+                    │
+                    ↓
+                BEGIN
+                    │
+                    ↓
+                Execute SQL
+                    │
+                    ↓
+            Record migration name
+                    │
+                    ↓
+                COMMIT
+                    │
+                    ↓
+            Return client to pool
+    ```
