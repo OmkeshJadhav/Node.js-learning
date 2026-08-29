@@ -450,20 +450,32 @@
     }
 
     async function runMigration(fileName: string): Promise<void> {
+        // Node reads file from path 'MIGRATIONS_DIR/fileName' and assign content of file to a variable (SQL as a string)
         const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, fileName), "utf-8");
+
+        // Give me one database connection from the pool.
         const client = await pool.connect();
 
         try {
+            // Starts a PostgreSQL transaction - Perform these operations together. Either all of them succeed, or none of them should be saved."
             await client.query("BEGIN");
+
+            // Execute the migration sql i.e. file content assigned to variable
             await client.query(sql);
+
+            // Insert entry in migrations table - $1 is a parameterized query & [fileName] provides the value for $1.
             await client.query("INSERT INTO migrations (name) values ($1)", [fileName]);
+
+            // permanently commits the transaction - Both table creation and entry insertion operations are committed.
             await client.query("COMMIT");
 
             logger.info(`migration completed: ${fileName}`);
         } catch (error) {
+            // if something fails - ROLLBACK - Undo everything done in this transaction. - So don't end up with a partially applied migration.
             await client.query("ROLLBACK");
             throw error;
         } finally {
+            // give back connection borrowed from the pool - This does not close the entire database connection pool.
             client.release();
         }
     }
