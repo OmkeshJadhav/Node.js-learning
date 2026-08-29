@@ -408,7 +408,8 @@
             Request → Create connection → Query → Close connection
             Request → Create connection → Query → Close connection
             Request → Create connection → Query → Close connection
-            ```
+            ```  
+
 
 ### Custom Migration
 - Why migration ? Migrations allow database schema changes made by one developer to be version-controlled and shared with other developers. When another developer pulls those migration files and runs the migration command, the pending changes are automatically applied to their local database, keeping their database structure in sync.
@@ -506,7 +507,7 @@
     6. COMMIT
     7. If anything fails → ROLLBACK
     8. Return connection to pool
-    
+
 - Complete process
     ```
             npm run migrate
