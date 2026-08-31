@@ -331,24 +331,24 @@
 - Create docker-compose.yml at the root.
     ```
     services:
-    postgres:
-        image: postgres:18-alpine
-        container_name: nodejs-capstone-project
-        restart: unless-stopped
+        postgres:
+            image: postgres:18-alpine
+            container_name: nodejs-capstone-project
+            restart: unless-stopped
 
-        ports:
-        - "5444:5435"
+            ports:
+            - "5444:5432"
 
-        environment:
-        POSTGRES_USER: postgres
-        POSTGRES_PASSWORD: postgres
-        POSTGRES_DB: nodejs-capstone
+            environment:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: postgres
+            POSTGRES_DB: nodejs-capstone
 
-        volumes:
-        - postgres_data:/var/lib/postgresql/data
+            volumes:
+            - postgres-data:/var/lib/postgresql
 
     volumes:
-    postgres_data:
+        postgres-data:
 
     ```
 - In .env, add DATABASE_URL variable
