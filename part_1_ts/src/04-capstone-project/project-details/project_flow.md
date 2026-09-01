@@ -563,3 +563,57 @@
                     ↓
             Return client to pool
     ```
+
+
+## AppError in errorHandler
+- Create AppError.ts inside errors folder: /src/errors/AppError.ts
+- Create constructor for AppError
+    ```
+    AppError.ts
+
+    export class AppError extends Error {
+        statusCode: number;
+
+        constructor(statusCode: number, message: string){
+            super(message),
+            this.statusCode = statusCode;
+        }
+    }
+
+    ```
+- Add AppError constructor to errorHandler
+    ```
+    if(err instanceof AppError){
+        res.status(err.statusCode).json({
+            success: false,
+            message: err.message
+        });
+        return
+    }
+    ```
+
+### Why use AppError
+- AppError lets your application throw structured, expected errors with an HTTP status code, while errorHandler centrally converts those errors into HTTP responses; unexpected errors fall back to 500.
+- AppError.ts: Defines the type of error your application intentionally throws:
+    ```
+    throw new AppError(404, "User not found");
+    ```
+- errorHandler.ts: Defines how errors are converted into HTTP responses:
+    ```
+    AppError → its statusCode
+    Unknown Error → 500
+    ```
+- if we don't use AppError then we have to manually handle all these status code and error message inside errorHandler like
+    ```
+    if (err.message === "User not found") {
+        return res.status(404).json(...);
+    }
+
+    if (err.message === "Email already exists") {
+        return res.status(409).json(...);
+    }
+
+    if (err.message === "Invalid input") {
+        return res.status(400).json(...);
+    }
+    ```
