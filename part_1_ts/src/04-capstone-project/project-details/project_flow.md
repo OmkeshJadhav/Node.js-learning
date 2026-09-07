@@ -617,3 +617,14 @@
         return res.status(400).json(...);
     }
     ```
+
+## Folder Structure
+1. Repositories - DB related logic
+    - e.g. In src/repositories/user.repository.ts
+2. Services - Business logic like validations, helper functions, JWT etc.
+    - e.g. In src/services/auth.service.ts
+3. Routes - Routes based on features. All routes are combined into Root route file
+    - e.g. src/routes/auth.routes.ts
+
+## Types Folder
+- Create types folder for all the types
