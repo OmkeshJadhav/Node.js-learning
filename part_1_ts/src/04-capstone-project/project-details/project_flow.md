@@ -628,3 +628,104 @@
 
 ## Types Folder
 - Create types folder for all the types
+- Create /types/user.ts
+    ```
+    export type user = {
+    id: string,
+    email: string,
+    role: string,
+    created_at: Date
+    }
+
+    export type DBUserRow = {
+        id: string,
+        email: string,
+        role: string,
+        created_at: Date
+    }
+
+    export type DBUserRowWithPassword = DBUserRow & {
+        password_hash: string | null;
+    } 
+    ```
+
+## auth Route - For Routing
+- Create post router for auth
+    ```
+    import { Router } from "express";
+    import { registerUser } from "../services/auth.service";
+
+    export const authRouter = Router();
+
+    authRouter.post("/register", async (req, res, next) => {
+        try {
+            const { email, passowrd } = req.body
+
+            // Do not write servive logic here - Service logic is in service file
+            await registerUser(email, passowrd)
+
+            res.status(201).json({
+                success: true,
+                message: "Registration successful. Please logion to continue."
+            })
+        } catch (error) {
+            next(error)
+        }
+    })
+    ```
+- Provide the auth route to root route
+    ```
+    import { Router } from 'express'
+    import { healthRouter } from './health.route';
+    import { authRouter } from './auth.routes';
+
+    export const apiRouter = Router()
+
+    apiRouter.use(healthRouter);
+    apiRouter.use("/auth", authRouter)
+    ```
+
+
+## Auth Service
+    ```
+    import { AppError } from "../errors/AppError"
+    import { findUserByEmail } from "../repositories/user.repository"
+
+    export const registerUser = async (email: string, password: string): Promise<void> => {
+        if (!email || !password) {
+            throw new AppError(400, "Email and password are required!")
+        }
+
+        // Best practice: Create constant folder and maintain constant values like password length inside it 
+        if (password.length < 6) {
+            throw new AppError(400, "Password must be at least 6 characters.")
+        }
+
+        const normalizeEmail = email.toLowerCase().trim()
+
+        // Find the user if it's already present in the DB - If present then do not allow to register with same email
+
+        const existingUser = await findUserByEmail(normalizeEmail)
+
+        if (existingUser) {
+            throw new AppError(409, "Email already exists.")
+        }
+    }
+    ```
+
+
+## User repository - For DB related logic
+    ```
+    import { pool } from "../lib/db";
+    import { DBUserRow, user } from "../types/user";
+
+    export const findUserByEmail = async (email: string): Promise<user | null> => {
+        const result = await pool.query<DBUserRow>(
+            "SELECT id, email, role, created_at FROM users WHERE email = $1",
+            [email]
+        )
+
+        return result.rows[0] ?? null
+
+    }
+    ```
