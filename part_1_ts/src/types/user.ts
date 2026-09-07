@@ -1,0 +1,6 @@
+export type user = {
+    id: string,
+    email: string,
+    role: string,
+    created_at: Date
+}
