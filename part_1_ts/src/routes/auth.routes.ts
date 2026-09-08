@@ -5,10 +5,10 @@ export const authRouter = Router();
 
 authRouter.post("/register", async (req, res, next) => {
     try {
-        const { email, passowrd } = req.body
-
+        const { email, password } = req.body
+        
         // Do not write servive logic here - Service logic is in service file
-        await registerUser(email, passowrd)
+        await registerUser(email, password)
 
         res.status(201).json({
             success: true,
