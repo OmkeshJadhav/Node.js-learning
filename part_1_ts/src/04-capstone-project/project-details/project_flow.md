@@ -626,7 +626,10 @@
 3. Routes - Routes based on features. All routes are combined into Root route file
     - e.g. src/routes/auth.routes.ts
 
-## Types Folder
+
+## User Registration Flow
+
+### Define Types
 - Create types folder for all the types
 - Create /types/user.ts
     ```
@@ -649,7 +652,7 @@
     } 
     ```
 
-## auth Route - For Routing
+### auth Route - For Routing
 - Create post router for auth
     ```
     import { Router } from "express";
@@ -686,7 +689,7 @@
     ```
 
 
-## Auth Service
+### Auth Service
     ```
     import { AppError } from "../errors/AppError"
     import { findUserByEmail } from "../repositories/user.repository"
@@ -696,7 +699,7 @@
             throw new AppError(400, "Email and password are required!")
         }
 
-        // Best practice: Create constant folder and maintain constant values like password length inside it 
+        // Best practice: Create constant folder and maintain constant values like password length inside it (Not used here)
         if (password.length < 6) {
             throw new AppError(400, "Password must be at least 6 characters.")
         }
@@ -718,7 +721,7 @@
     ```
     import { pool } from "../lib/db";
     import { DBUserRow, user } from "../types/user";
-
+    
     export const findUserByEmail = async (email: string): Promise<user | null> => {
         const result = await pool.query<DBUserRow>(
             "SELECT id, email, role, created_at FROM users WHERE email = $1",
@@ -726,6 +729,5 @@
         )
 
         return result.rows[0] ?? null
-
     }
     ```
