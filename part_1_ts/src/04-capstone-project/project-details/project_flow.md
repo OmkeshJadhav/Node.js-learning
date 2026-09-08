@@ -662,10 +662,10 @@
 
     authRouter.post("/register", async (req, res, next) => {
         try {
-            const { email, passowrd } = req.body
-
+            const { email, password } = req.body
+            
             // Do not write servive logic here - Service logic is in service file
-            await registerUser(email, passowrd)
+            await registerUser(email, password)
 
             res.status(201).json({
                 success: true,
@@ -691,28 +691,33 @@
 
 ### Auth Service
     ```
+    import { min_password_length, salt_round } from "../constants/auth.constants"
     import { AppError } from "../errors/AppError"
-    import { findUserByEmail } from "../repositories/user.repository"
+    import { createUser, findUserByEmail } from "../repositories/user.repository"
+    import bcrypt from "bcrypt"
 
     export const registerUser = async (email: string, password: string): Promise<void> => {
         if (!email || !password) {
             throw new AppError(400, "Email and password are required!")
         }
 
-        // Best practice: Create constant folder and maintain constant values like password length inside it (Not used here)
-        if (password.length < 6) {
+        // Best practice: Create constant folder and maintain constant values like password length inside it 
+        if (password.length < min_password_length) {
             throw new AppError(400, "Password must be at least 6 characters.")
         }
 
         const normalizeEmail = email.toLowerCase().trim()
 
         // Find the user if it's already present in the DB - If present then do not allow to register with same email
-
         const existingUser = await findUserByEmail(normalizeEmail)
 
         if (existingUser) {
             throw new AppError(409, "Email already exists.")
         }
+
+        const password_hash = await bcrypt.hash(password, salt_round)
+
+        await createUser(email, password_hash)
     }
     ```
 
@@ -729,5 +734,17 @@
         )
 
         return result.rows[0] ?? null
+    }
+
+    export const createUser = async (email: string, password_hash: string): Promise<user> => {
+        const result = await pool.query<DBUserRow>(
+            `INSERT INTO users (email, password_hash)
+                VALUES($1, $2)
+                RETURNING id, email, password_hash, role, created_at
+            `,
+            [email, password_hash]
+        )
+
+        return result.rows[0];
     }
     ```
