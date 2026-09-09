@@ -91,6 +91,15 @@
 ## env configuration
 - Add .env file at the root level
     In .env add PORT and NODE_ENV as env variables
+    ```
+    PORT=5001
+
+    NODE_ENV='development'
+
+    LOGGER_LEVEL='info'
+
+    DATABASE_URL=postgresql://postgres:postgres@localhost:5444/nodejs-capstone
+    ```
 - Create env.ts file in config folder
 - In env.ts - Configure environment variables using dotenv.config() for port, nodeEnv and isProduction
     ```
