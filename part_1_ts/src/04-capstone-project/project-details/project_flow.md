@@ -628,32 +628,23 @@
 
 
 ## User Registration Flow
-
-### Define Types
-- Create types folder for all the types
-- Create /types/user.ts
+1. Define user type
     ```
     export type user = {
-    id: string,
-    email: string,
-    role: string,
-    created_at: Date
-    }
-
-    export type DBUserRow = {
         id: string,
         email: string,
         role: string,
         created_at: Date
     }
-
-    export type DBUserRowWithPassword = DBUserRow & {
-        password_hash: string | null;
-    } 
     ```
 
-### auth Route - For Routing
-- Create post router for auth
+2. Create route for auth
+    - post method
+    - "/register" path & (req, res, next) 
+    - Get email and password from request body
+    - Call registerUser function (from auth service) with email and password - We haven't yet created this function
+    - Send response with status code 201
+    - Catch the error 
     ```
     import { Router } from "express";
     import { registerUser } from "../services/auth.service";
@@ -676,7 +667,159 @@
         }
     })
     ```
-- Provide the auth route to root route
+
+3. Provide the auth route to root route
+    ```
+    import { Router } from 'express'
+    import { healthRouter } from './health.route';
+    import { authRouter } from './auth.routes';
+
+    export const apiRouter = Router()
+
+    apiRouter.use(healthRouter);
+    apiRouter.use("/auth", authRouter)
+    ```
+
+4. Auth service (src/services/auth.service.ts)
+    - Create registerUser function
+        ```
+        export const registerUser = async (email: string, password: string): Promise<void> => {}
+        ```
+    - Verify if email and password are present
+        ```
+        if (!email || !password) {
+            throw new AppError(400, "Email and password are required!")
+        }
+        ```
+    - Verify password length is more than minimum password length
+        - Best practice: Create constant folder and maintain constant values like password length inside it
+        ```
+        if (password.length < min_password_length) {
+            throw new AppError(400, "Password must be at least 6 characters.")
+        }
+        ```
+    - normalize the email to lower case and trim any white spaces
+        ```
+        const normalizeEmail = email.toLowerCase().trim()
+        ```
+    - Find if the user is already present - As it is a DB related task create findUser function in repositories
+        ```
+        const existingUser = await findUserByEmail(normalizeEmail)
+        ```
+    - If email of user is already present then throw error
+        ```
+        if (existingUser) {
+            throw new AppError(409, "Email already exists.")
+        }
+        ```
+    - Create password hash using bcrypt (salt_round using constant)
+        ```
+        const password_hash = await bcrypt.hash(password, salt_round)
+        ```
+    - Call createUser function with email and password hash to save the user data in the DB - As it is a DB related task create createUser function in repositories
+        ```
+        await createUser(email, password_hash)
+        ```
+
+5. Create user.repository.ts (src/repositories/user.repository.ts) for DB related logic
+    - Create findUserByEmail function. The function will return a user (if found) or null (if not found)
+        ```
+        export const findUserByEmail = async (email: string): Promise<user | null> => {}
+        ```
+    - Write query to find user - It will
+        ```
+            const result = await pool.query<DBUserRow>(
+                "SELECT id, email, role, created_at FROM users WHERE email = $1",
+                [email]
+            )
+        ```
+    - Create DBUserRow type in /src/types/user.ts - Actually it is what we query
+        ```
+        export type DBUserRow = {
+            id: string,
+            email: string,
+            role: string,
+            created_at: Date
+        }
+        ```
+    - return the result
+        ```
+            return result.rows[0] ?? null
+        ```
+
+6. Create createUser function. The function will return the created user
+    - Create user
+        ```
+        export const createUser = async (email: string, password_hash: string): Promise<user> => {}
+        ```
+    - Write query to insert the new user into the DB
+        ```
+        const result = await pool.query<DBUserRowWithPassword>(
+            `INSERT INTO users (email, password_hash)
+                VALUES($1, $2)
+                RETURNING id, email, password_hash, role, created_at
+            `,
+            [email, password_hash]
+        )
+        ```
+    - Create DBUserRowWithPassword type in /src/types/user.ts
+        ```
+        export type DBUserRowWithPassword = DBUserRow & {
+            password_hash: string | null;
+        } 
+        ```
+    - return created user data
+        ```
+        return result.rows[0];
+        ```
+
+
+### /types/user.ts - Define types
+    ```
+    export type user = {
+        id: string,
+        email: string,
+        role: string,
+        created_at: Date
+    }
+
+    export type DBUserRow = {
+        id: string,
+        email: string,
+        role: string,
+        created_at: Date
+    }
+
+    export type DBUserRowWithPassword = DBUserRow & {
+        password_hash: string | null;
+    } 
+    ```
+
+### auth.routes.ts - For Auth Routing
+    ```
+    import { Router } from "express";
+    import { registerUser } from "../services/auth.service";
+
+    export const authRouter = Router();
+
+    authRouter.post("/register", async (req, res, next) => {
+        try {
+            const { email, password } = req.body
+            
+            // Do not write servive logic here - Service logic is in service file
+            await registerUser(email, password)
+
+            res.status(201).json({
+                success: true,
+                message: "Registration successful. Please logion to continue."
+            })
+        } catch (error) {
+            next(error)
+        }
+    })
+    ```
+
+### index.ts - root route
     ```
     import { Router } from 'express'
     import { healthRouter } from './health.route';
@@ -689,7 +832,7 @@
     ```
 
 
-### Auth Service
+### auth.service.ts - Auth Service
     ```
     import { min_password_length, salt_round } from "../constants/auth.constants"
     import { AppError } from "../errors/AppError"
@@ -701,14 +844,12 @@
             throw new AppError(400, "Email and password are required!")
         }
 
-        // Best practice: Create constant folder and maintain constant values like password length inside it 
         if (password.length < min_password_length) {
             throw new AppError(400, "Password must be at least 6 characters.")
         }
 
         const normalizeEmail = email.toLowerCase().trim()
 
-        // Find the user if it's already present in the DB - If present then do not allow to register with same email
         const existingUser = await findUserByEmail(normalizeEmail)
 
         if (existingUser) {
@@ -722,7 +863,7 @@
     ```
 
 
-### User repository - For DB related logic
+### user.repository.ts - User repository (For DB related logic)
     ```
     import { pool } from "../lib/db";
     import { DBUserRow, user } from "../types/user";
@@ -737,7 +878,7 @@
     }
 
     export const createUser = async (email: string, password_hash: string): Promise<user> => {
-        const result = await pool.query<DBUserRow>(
+        const result = await pool.query<DBUserRowWithPassword>(
             `INSERT INTO users (email, password_hash)
                 VALUES($1, $2)
                 RETURNING id, email, password_hash, role, created_at
