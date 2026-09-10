@@ -897,4 +897,7 @@
 
         return result.rows[0];
     }
-    ```
+    ```  
+
+
+## User Login Flow
