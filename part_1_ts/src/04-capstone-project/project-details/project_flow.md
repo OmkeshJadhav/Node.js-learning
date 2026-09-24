@@ -113,6 +113,30 @@
         isProduction: (process.env.NODE_ENV ?? 'development') === 'production',
     } as const;
     ```  
+- We can also create function to check if env variable is present
+    ```
+    import dotenv from 'dotenv'
+
+    dotenv.config();
+
+    const checkRequiredEnvVariables = (key: string):string => {
+        const value = process.env[key]
+
+        if(!value){
+            throw new Error(`Missing env variable for ${key}`)
+        }
+
+        return value
+    }
+
+    export const env = {
+        port: Number(process.env.PORT ?? 5001),
+        nodeEnv: process.env.NODE_ENV ?? 'development',
+        isProduction: (process.env.NODE_ENV ?? 'development') === 'production',
+        loggerLevel: process.env.LOGGER_LEVEL ?? 'info',
+        databaseUrl: checkRequiredEnvVariables('DATABASE_URL')
+    } as const;
+    ```
 
 ## app.ts 
 - Create app.ts file at the root of src
@@ -378,7 +402,7 @@
 ### Create Tables
 - Created migrations folder at the root
 - In migrations folder, created 4 sql files
-    - 001_enable_pgcryto.sql
+    - 001_enable_pgcryto.sql: CREATE EXTENSION IF NOT EXISTS "pgcrypto";
     - 002_create_user_table.sql: id, email, password_hash, google_id, role, created_at, updated_at
     - 003_create_support_tasks_table.sql: id, title, status, user_id
     - 004_create_banners_table.sql: id, image_url, cloudinary_public_id, created_at, updated_at
@@ -389,7 +413,7 @@
     npm install pg
     npm i --save-dev @types/pg
     ```
-    - pg is a postgres client for Node.js. It acts as medium that allows Node.js app to connect, query and interact with postgres DB. 
+    - pg is a postgres client for Node.js (similar to mongoose for mongoDB). It acts as medium that allows Node.js app to connect, query and interact with postgres DB. 
     - It allows to write raw SQL directly in JS/TS code.
 - Create db.ts in src/lib/db.ts 
     ```
@@ -466,7 +490,7 @@
         const client = await pool.connect();
 
         try {
-            // Starts a PostgreSQL transaction - Perform these operations together. Either all of them succeed, or none of them should be saved."
+            // Starts a PostgreSQL TRANSACTION - Perform these operations together. Either all of them succeed, or none of them should be saved."
             await client.query("BEGIN");
 
             // Execute the migration sql i.e. file content assigned to variable
@@ -558,7 +582,7 @@
                 migration
                     │
                     ↓
-                BEGIN
+            Transaction BEGIN
                     │
                     ↓
                 Execute SQL
@@ -567,7 +591,7 @@
             Record migration name
                     │
                     ↓
-                COMMIT
+            Transaction COMMIT
                     │
                     ↓
             Return client to pool
@@ -588,9 +612,8 @@
             this.statusCode = statusCode;
         }
     }
-
     ```
-- Add AppError constructor to errorHandler
+- Add AppError constructor to errorHandler.ts in middlewares
     ```
     if(err instanceof AppError){
         res.status(err.statusCode).json({
@@ -635,7 +658,7 @@
 3. Routes - Routes based on features. All routes are combined into Root route file
     - e.g. src/routes/auth.routes.ts
 
-
+  
 ## User Registration Flow
 1. Define user type
     ```
