@@ -1,12 +1,12 @@
 import { Router } from "express";
-import { registerUser } from "../services/auth.service";
+import { loginUser, registerUser } from "../services/auth.service";
 
 export const authRouter = Router();
 
 authRouter.post("/register", async (req, res, next) => {
     try {
         const { email, password } = req.body
-        
+
         // Do not write servive logic here - Service logic is in service file
         await registerUser(email, password)
 
@@ -19,11 +19,17 @@ authRouter.post("/register", async (req, res, next) => {
     }
 })
 
-authRouter.post("/login", async(req, resizeBy, next) => {
+authRouter.post("/login", async (req, res, next) => {
     try {
-        
+        const { email, password } = req.body;
 
-        
+        await loginUser(email, password)
+
+        res.status(200).json({
+            success: true,
+            message: "Login successful!"
+        })
+
     } catch (error) {
         next(error)
     }

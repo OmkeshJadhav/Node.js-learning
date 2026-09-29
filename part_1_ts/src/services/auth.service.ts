@@ -26,3 +26,18 @@ export const registerUser = async (email: string, password: string): Promise<voi
 
     await createUser(email, password_hash)
 }
+
+export const loginUser = async (email: string, password: string) => {
+    if (!email || !password) {
+        throw new AppError(400, "Email and password are required!")
+    }
+
+    const normalizeEmail = email.toLowerCase().trim();
+
+    // Find the user if it's already present in the DB - If present then do not allow to register with same email
+    const existingUser = await findUserByEmail(normalizeEmail)
+
+    if(!existingUser){
+        throw new AppError(404, "Email or password are incorrect")
+    }
+}
