@@ -712,7 +712,7 @@
     apiRouter.use("/auth", authRouter)
     ```
 
-4. Auth service (src/services/auth.service.ts)
+4. Auth service (src/services/auth.service.ts) 
     - Create registerUser function
         ```
         export const registerUser = async (email: string, password: string): Promise<void> => {}
