@@ -687,12 +687,12 @@
         try {
             const { email, password } = req.body
             
-            // Do not write servive logic here - Service logic is in service file
+            // Do not write service logic here - Service logic is in service file
             await registerUser(email, password)
 
             res.status(201).json({
                 success: true,
-                message: "Registration successful. Please logion to continue."
+                message: "Registration successful. Please login to continue."
             })
         } catch (error) {
             next(error)
