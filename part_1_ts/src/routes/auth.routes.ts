@@ -21,7 +21,7 @@ authRouter.post("/register", async (req, res, next) => {
 
 authRouter.post("/login", async(req, resizeBy, next) => {
     try {
-        const {emal, password} = req.body;
+        
 
         
     } catch (error) {
