@@ -40,4 +40,6 @@ export const loginUser = async (email: string, password: string) => {
     if(!existingUser){
         throw new AppError(404, "Email or password are incorrect")
     }
+
+    return "Hello"
 }
