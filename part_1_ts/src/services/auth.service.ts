@@ -37,7 +37,7 @@ export const loginUser = async (email: string, password: string) => {
     // Find the user if it's already present in the DB - If present then do not allow to register with same email
     const existingUser = await findUserByEmail(normalizeEmail)
 
-    if(!existingUser){
+    if (!existingUser) {
         throw new AppError(404, "Email or password are incorrect")
     }
 
