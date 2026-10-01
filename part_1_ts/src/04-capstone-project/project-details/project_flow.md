@@ -979,3 +979,148 @@
         }
     })
     ```
+
+### Create loginUser function in src/services/auth.service.ts\
+    - Validate email & password are present
+        ```
+        if (!email || !password) {
+            throw new AppError(400, "Email and password are required!")
+        }
+        ```
+    - Normalize the email
+        ```
+        const normalizeEmail = email.toLowerCase().trim();
+        ```
+    - check user is present / already registered using findUserByEmailWithPassword (Need to create findUserByEmailWithPassword in user.repository.ts)
+        ```
+        const user = await findUserByEmailWithPassword(normalizeEmail)
+        ```
+
+        - findUserByEmailWithPassword in user.repository.ts
+            ```
+            export const findUserByEmailWithPassword = async(email: string): Promise<DBUserRowWithPassword | null> => {
+                const result = await pool.query(
+                    `
+                    SELECT id, email, role, password_hash, created_at
+                    FROM users 
+                    WHERE email = $1
+                    `,
+                    [email]
+                )
+
+                return result.rows[0] ?? null;
+            }
+            ```
+    - Validate password_hasdh is present for the given email
+        ```
+        if(!user?.password_hash){
+            throw new AppError(401, "Invalid email or password.")
+        }
+        ```
+    - Validate provided password and stored password_hash are matching using bcrypt.compare
+        ```
+        const isPasswordValid = await bcrypt.compare(password, user.password_hash)
+        ```
+    - Store the data in accessToken using signAccessToken (Need to create signAccessToken in src/lib/jwt.ts)
+            ```
+            const accessToken = signAccessToken({
+                userId: user.id,
+                email: user.email,
+                role: user.role
+            })
+            ```
+        - signAccessToken
+            ```
+            import { env } from "../config/env";
+            import { TokenPayload } from "../types/user";
+            import jwt, {SignOptions} from "jsonwebtoken"
+
+            export const signAccessToken = (payload: TokenPayload): string => {
+                const options: SignOptions = {
+                    expiresIn: env.jwtAccessExpiresIn as SignOptions['expiresIn']
+                }
+                
+                return jwt.sign(payload, env.jwtAccessSecret, options)
+            }
+            ```
+
+        - For signAccessToken we need types for TokenPayload: Create TokenPayload type in src/types/user
+            ```
+            export type TokenPayload = {
+                userId: string,
+                email: string,
+                role: string
+            }
+            ```
+    - Final login function
+        ```
+        export const loginUser = async (email: string, password: string): Promise<{accessToken: string}> => {
+            if (!email || !password) {
+                throw new AppError(400, "Email and password are required!")
+            }
+
+            const normalizeEmail = email.toLowerCase().trim();
+
+            // Find the user with email & password
+            const user = await findUserByEmailWithPassword(normalizeEmail)
+
+            if(!user?.password_hash){
+                throw new AppError(401, "Invalid email or password.")
+            }
+            
+            const isPasswordValid = await bcrypt.compare(password, user.password_hash)
+
+            if(!isPasswordValid){
+                throw new AppError(401,  "Invalid email or password.")
+            }
+
+            const accessToken = signAccessToken({
+                userId: user.id,
+                email: user.email,
+                role: user.role
+            })
+
+            return {accessToken}
+        }
+        ```
+
+    - Install jsonwebtoken and its types
+        ```
+        npm i jsonwebtoken
+
+        npm i -D @types/jsonwebtoken
+        ```
+    - Add JWT_SECRET & JWT_ACCESS_EXPIRES_IN in .env variables & then add them to env.ts
+        ```
+        JWT_SECRET='super_secret_jwt'
+
+        JWT_ACCESS_EXPIRES_IN='30m'
+        ``` 
+
+        & 
+
+        ```
+        import dotenv from 'dotenv'
+
+        dotenv.config();
+
+        const checkRequiredEnvVariables = (key: string):string => {
+            const value = process.env[key]
+
+            if(!value){
+                throw new Error(`Missing env variable for ${key}`)
+            }
+
+            return value
+        }
+
+        export const env = {
+            port: Number(process.env.PORT ?? 5001),
+            nodeEnv: process.env.NODE_ENV ?? 'development',
+            isProduction: (process.env.NODE_ENV ?? 'development') === 'production',
+            loggerLevel: process.env.LOGGER_LEVEL ?? 'info',
+            databaseUrl: checkRequiredEnvVariables('DATABASE_URL'),
+            jwtAccessSecret: checkRequiredEnvVariables('JWT_SECRET'),
+            jwtAccessExpiresIn: checkRequiredEnvVariables('JWT_ACCESS_EXPIRES_IN')
+        } as const;
+        ```
