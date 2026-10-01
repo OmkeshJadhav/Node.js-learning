@@ -957,6 +957,25 @@
 
 
 ## User Login Flow
+### Create login route in src/routes/auth.routes.ts
+    - Get email & password from req.body
+    - Get access token from loginUser function using email & password (Need to create loginUser function in services)
+    - Send response with access token
     ```
+    authRouter.post("/login", async (req, res, next) => {
+        try {
+            const { email, password } = req.body;
 
+            const accessToken = await loginUser(email, password)
+
+            res.status(200).json({
+                success: true,
+                message: "Login successful!",
+                data: {accessToken}
+            })
+
+        } catch (error) {
+            next(error)
+        }
+    })
     ```
