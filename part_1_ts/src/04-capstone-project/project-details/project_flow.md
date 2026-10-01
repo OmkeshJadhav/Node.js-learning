@@ -923,7 +923,7 @@
 
         const password_hash = await bcrypt.hash(password, salt_round)
 
-        await createUser(email, password_hash)
+        await createUser(normalizeEmail, password_hash)
     }
     ```
 
@@ -1011,7 +1011,7 @@
                 return result.rows[0] ?? null;
             }
             ```
-    - Validate password_hasdh is present for the given email
+    - Validate password_hash is present for the given email
         ```
         if(!user?.password_hash){
             throw new AppError(401, "Invalid email or password.")
