@@ -1,6 +1,7 @@
 import { min_password_length, salt_round } from "../constants/auth.constants"
 import { AppError } from "../errors/AppError"
-import { createUser, findUserByEmail } from "../repositories/user.repository"
+import { signAccessToken } from "../lib/jwt"
+import { createUser, findUserByEmail, findUserByEmailWithPassword } from "../repositories/user.repository"
 import bcrypt from "bcrypt"
 
 export const registerUser = async (email: string, password: string): Promise<void> => {
@@ -27,19 +28,31 @@ export const registerUser = async (email: string, password: string): Promise<voi
     await createUser(normalizeEmail, password_hash)
 }
 
-export const loginUser = async (email: string, password: string) => {
+export const loginUser = async (email: string, password: string): Promise<{accessToken: string}> => {
     if (!email || !password) {
         throw new AppError(400, "Email and password are required!")
     }
 
     const normalizeEmail = email.toLowerCase().trim();
 
-    // Find the user if it's already present in the DB - If present then do not allow to register with same email
-    const existingUser = await findUserByEmail(normalizeEmail)
+    // Find the user with email & password
+    const user = await findUserByEmailWithPassword(normalizeEmail)
 
-    if (!existingUser) {
-        throw new AppError(404, "Email or password are incorrect")
+    if(!user?.password_hash){
+        throw new AppError(401, "Invalid email or password.")
+    }
+    
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash)
+
+    if(!isPasswordValid){
+        throw new AppError(401,  "Invalid email or password.")
     }
 
-    return "Hello"
+    const accessToken = signAccessToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role
+    })
+
+    return {accessToken}
 }
