@@ -24,7 +24,7 @@ export const registerUser = async (email: string, password: string): Promise<voi
 
     const password_hash = await bcrypt.hash(password, salt_round)
 
-    await createUser(email, password_hash)
+    await createUser(normalizeEmail, password_hash)
 }
 
 export const loginUser = async (email: string, password: string) => {

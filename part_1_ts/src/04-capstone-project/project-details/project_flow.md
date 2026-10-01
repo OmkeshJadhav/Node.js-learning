@@ -11,7 +11,7 @@
     "scripts": {
         "dev": "tsx watch src/server.ts",
         "build": "tsc",
-        "start": "node dist/server.js",
+        "start": "node dist/server.js"
     },
     "keywords": [],
     "author": "",
@@ -24,9 +24,11 @@
         "pino": "^10.3.1"
     },
     "devDependencies": {
+        "@types/bcrypt": "^6.0.0",
         "@types/cors": "^2.8.19",
         "@types/express": "^5.0.6",
         "@types/node": "^26.1.2",
+        "@types/pg": "^8.23.1",
         "pino-pretty": "^13.1.3",
         "tsx": "^4.23.1",
         "typescript": "^7.0.2"
@@ -142,18 +144,30 @@
 - Create app.ts file at the root of src
 - app.ts is entry point for express and express related logic and sub-base file for the project
 - Express will help us to create web server
-- Create creatApp function and inside it use app.use middleware with express.json()
+- Create createApp function and inside it use app.use middleware with express.json()
     - app.use(express.json()) return middleware that only parses json and only looks at request where Content-Type header matches the type option
     ```
     import express from 'express'
+    import { errorHandler } from './middlewares/errorHandler';
+    import { notFound } from './middlewares/notFound';
+    import { configureCors } from './config/cors-config';
+    import { apiRouter } from './routes';
 
-    export const creatApp = () => {
+    export const createApp = () => {
         const app = express();
+        
+        app.use(configureCors())
 
         app.use(express.json());
-    }
+        app.use(express.urlencoded({extended: true}))
 
-    return app;
+        app.use('/api', apiRouter)
+        app.use(notFound);
+
+        app.use(errorHandler);
+
+        return app
+    }
     ```
 
 
@@ -402,7 +416,7 @@
 ### Create Tables
 - Created migrations folder at the root
 - In migrations folder, created 4 sql files
-    - 001_enable_pgcryto.sql: CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+    - 001_enable_pgcrypto.sql: CREATE EXTENSION IF NOT EXISTS "pgcrypto";
     - 002_create_user_table.sql: id, email, password_hash, google_id, role, created_at, updated_at
     - 003_create_support_tasks_table.sql: id, title, status, user_id
     - 004_create_banners_table.sql: id, image_url, cloudinary_public_id, created_at, updated_at
@@ -608,8 +622,9 @@
         statusCode: number;
 
         constructor(statusCode: number, message: string){
-            super(message),
+            super(message);
             this.statusCode = statusCode;
+            this.name = 'AppError';
         }
     }
     ```
@@ -750,7 +765,7 @@
         ```
     - Call createUser function with email and password hash to save the user data in the DB - As it is a DB related task create createUser function in repositories
         ```
-        await createUser(email, password_hash)
+        await createUser(normalizeEmail, password_hash)
         ```
 
 5. Create user.repository.ts (src/repositories/user.repository.ts) for DB related logic
@@ -803,6 +818,24 @@
     - return created user data
         ```
         return result.rows[0];
+        ```
+    - Final function
+        ```
+        import { pool } from "../lib/db";
+        import { DBUserRow, DBUserRowWithPassword, user } from "../types/user";
+
+        export const createUser = async (email: string, password_hash: string): Promise<user> => {
+            const result = await pool.query<DBUserRowWithPassword>(
+                `INSERT INTO users (email, password_hash)
+                    VALUES($1, $2)
+                    RETURNING id, email, password_hash, role, created_at
+                `,
+                [email, password_hash]
+            )
+
+            return result.rows[0];
+        }
+
         ```
 
 
