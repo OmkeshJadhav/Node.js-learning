@@ -1127,3 +1127,5 @@
 
 
 ## Middlewares
+Bearer Token
+Refresh Token
