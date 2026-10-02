@@ -1127,5 +1127,7 @@
 
 
 ## Middlewares
+1. Authentication Middleware
+2. Admin Middleware
 Bearer Token
 Refresh Token
