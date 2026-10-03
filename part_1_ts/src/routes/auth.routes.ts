@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { loginUser, registerUser } from "../services/auth.service";
+import { authenticate } from "../middlewares/auth.middleware";
 
 export const authRouter = Router();
 
@@ -31,6 +32,19 @@ authRouter.post("/login", async (req, res, next) => {
             data: { accessToken }
         })
 
+    } catch (error) {
+        next(error)
+    }
+})
+
+authRouter.get("/me", authenticate, async (req, res, next) => {
+    try {
+        res.status(200).json({
+            success: true,
+            data: {
+                user: req.user
+            }
+        })
     } catch (error) {
         next(error)
     }

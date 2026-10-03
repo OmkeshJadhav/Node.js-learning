@@ -1128,6 +1128,115 @@
 
 ## Middlewares
 1. Authentication Middleware
+    - Why authentication middleware? Some routes (like /me) should be accessible only to logged-in users. The middleware runs before the route handler, verifies the access token sent by the client and attaches the logged-in user's data to req.user. If the token is missing/invalid, the request never reaches the route handler.
+    - Flow
+        ```
+        Client Request (Authorization: Bearer <accessToken>)
+                    │
+                    ↓
+            authenticate middleware
+                    │
+                    ├── No "Bearer" header ──→ next(AppError 401) ──→ errorHandler
+                    │
+                    ↓
+            verifyAccessToken(token)
+                    │
+                    ├── Invalid/Expired ──→ throw AppError 401 ──→ errorHandler
+                    │
+                    ↓
+            req.user = decoded payload
+                    │
+                    ↓
+                next() ──→ Route handler
+        ```
+
+    ### Create verifyAccessToken function in src/lib/jwt.ts
+    - jwt.verify checks the token signature using the same secret (env.jwtAccessSecret) that was used in signAccessToken and also checks the expiry
+    - If valid - returns the decoded payload (userId, email, role)
+    - If invalid or expired - jwt.verify throws error, we catch it and throw AppError with 401
+        ```
+        import { AppError } from "../errors/AppError";
+
+        export const verifyAccessToken = (token: string): TokenPayload => {
+            try {
+                return jwt.verify(token, env.jwtAccessSecret) as TokenPayload
+            } catch (error) {
+                throw new AppError(401, "Invalid or expired access token.")
+            }
+        }
+        ```
+
+    ### Add user type to Express Request object
+    - By default, Express Request type does not have user property. So TypeScript will throw error on req.user = ...
+    - Create express.d.ts in src/types/express.d.ts and extend the Request interface using declaration merging
+        ```
+        import { TokenPayload } from "./user";
+
+        declare global {
+            namespace Express {
+                interface Request {
+                    user?: TokenPayload
+                }
+            }
+        }
+
+        export {}
+        ```
+        - declare global -> modifies the global Express namespace instead of creating a new one
+        - user?: -> optional because user is present only after authenticate middleware runs
+        - export {} -> makes this file a module, which is required for declare global to work
+
+    ### Create authenticate middleware in src/middlewares/auth.middleware.ts
+    - Get the authorization header from req.headers
+    - Check header starts with "Bearer " (with space) - if not, pass AppError 401 to next() and return
+    - Extract the token from header - "Bearer <token>".split(" ")[1]
+    - Verify the token using verifyAccessToken and attach the decoded payload to req.user
+    - Call next() to move to the route handler
+        ```
+        import { NextFunction, Request, Response } from "express";
+        import { AppError } from "../errors/AppError";
+        import { verifyAccessToken } from "../lib/jwt";
+
+        export const authenticate = (req: Request, _res: Response, next: NextFunction): void => {
+            const authHeader = req.headers.authorization
+
+            if(!authHeader?.startsWith("Bearer ")){
+                next(new AppError(401, "Access Token is required"))
+                return;
+            }
+
+            const token = authHeader.split(" ")[1]
+
+            req.user = verifyAccessToken(token)
+
+            next()
+        }
+        ```
+        - Express 5 automatically catches the error thrown by verifyAccessToken (sync middleware) and forwards it to errorHandler
+
+    ### Use authenticate middleware in a protected route - /me in src/routes/auth.routes.ts
+    - Pass authenticate as second argument (before route handler) - it runs first for this route only
+    - Inside handler, req.user is available with the logged-in user's data
+        ```
+        import { authenticate } from "../middlewares/auth.middleware";
+
+        authRouter.get("/me", authenticate, async (req, res, next) => {
+            try {
+                res.status(200).json({
+                    success: true,
+                    data: {
+                        user: req.user
+                    }
+                })
+            } catch (error) {
+                next(error)
+            }
+        })
+        ```
+    - Test: GET /api/auth/me with header
+        ```
+        Authorization: Bearer <accessToken received from /login>
+        ```
+
+
 2. Admin Middleware
-Bearer Token
-Refresh Token
