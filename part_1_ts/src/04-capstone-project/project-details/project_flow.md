@@ -1166,7 +1166,7 @@
         }
         ```
 
-    ### Add user type to Express Request object
+    ### Add/Append user type to Express Request object
     - By default, Express Request type does not have user property. So TypeScript will throw error on req.user = ...
     - Create express.d.ts in src/types/express.d.ts and extend the Request interface using declaration merging
         ```
