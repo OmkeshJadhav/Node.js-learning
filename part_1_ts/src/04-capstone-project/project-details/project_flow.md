@@ -957,21 +957,163 @@
 
 
 ## User Login Flow
-### Create login route in src/routes/auth.routes.ts
-    - Get email & password from req.body
-    - Get access token from loginUser function using email & password (Need to create loginUser function in services)
-    - Send response with access token
+- Why login? The user sends email & password. If they are correct, the server returns a signed JWT access token. The client sends this token in the Authorization header for protected routes (see Authentication Middleware).
+- Flow
+    ```
+    POST /api/auth/login { email, password }
+                │
+                ↓
+        login route (auth.routes.ts)
+                │
+                ↓
+        loginUser (auth.service.ts)
+                │
+                ├── email/password missing ──→ AppError 400
+                │
+                ↓
+        findUserByEmailWithPassword (user.repository.ts)
+                │
+                ├── user not found / no password_hash ──→ AppError 401
+                │
+                ↓
+        bcrypt.compare(password, password_hash)
+                │
+                ├── not matching ──→ AppError 401
+                │
+                ↓
+        signAccessToken({ userId, email, role }) (jwt.ts)
+                │
+                ↓
+        200 { success, message, data: { accessToken } }
+    ```
+
+### 1. Install jsonwebtoken and its types
+- jsonwebtoken is used to create (sign) and verify JWT tokens
+    ```
+    npm i jsonwebtoken
+
+    npm i -D @types/jsonwebtoken
+    ```
+
+### 2. Add JWT env variables
+- Add JWT_SECRET & JWT_ACCESS_EXPIRES_IN in .env
+    ```
+    JWT_SECRET='super_secret_jwt'
+
+    JWT_ACCESS_EXPIRES_IN='30m'
+    ```
+- Add them to src/config/env.ts using checkRequiredEnvVariables - so app fails at startup if they are missing
+    ```
+    export const env = {
+        port: Number(process.env.PORT ?? 5001),
+        nodeEnv: process.env.NODE_ENV ?? 'development',
+        isProduction: (process.env.NODE_ENV ?? 'development') === 'production',
+        loggerLevel: process.env.LOGGER_LEVEL ?? 'info',
+        databaseUrl: checkRequiredEnvVariables('DATABASE_URL'),
+        jwtAccessSecret: checkRequiredEnvVariables('JWT_SECRET'),
+        jwtAccessExpiresIn: checkRequiredEnvVariables('JWT_ACCESS_EXPIRES_IN')
+    } as const;
+    ```
+
+### 3. Create TokenPayload type in src/types/user.ts
+- This is the data we store inside the JWT. Never store password or sensitive data in it - JWT payload is only encoded (base64), not encrypted.
+    ```
+    export type TokenPayload = {
+        userId: string,
+        email: string,
+        role: string
+    }
+    ```
+
+### 4. Create signAccessToken function in src/lib/jwt.ts
+- jwt.sign creates a token from payload, signed with secret, with expiry time
+- `as SignOptions['expiresIn']` -> env value is a plain string but jsonwebtoken expects specific format like '30m', '1h' - so we cast it
+    ```
+    import { env } from "../config/env";
+    import { TokenPayload } from "../types/user";
+    import jwt, {SignOptions} from "jsonwebtoken"
+
+    export const signAccessToken = (payload: TokenPayload): string => {
+        const options: SignOptions = {
+            expiresIn: env.jwtAccessExpiresIn as SignOptions['expiresIn']
+        }
+
+        return jwt.sign(payload, env.jwtAccessSecret, options)
+    }
+    ```
+
+### 5. Create findUserByEmailWithPassword in src/repositories/user.repository.ts
+- findUserByEmail (used in register) does not select password_hash. For login we need password_hash to compare, so we create a separate function.
+- Keeping them separate makes sure password_hash is fetched only when really needed.
+    ```
+    export const findUserByEmailWithPassword = async(email: string): Promise<DBUserRowWithPassword | null> => {
+        const result = await pool.query<DBUserRowWithPassword>(
+            `
+            SELECT id, email, role, password_hash, created_at
+            FROM users
+            WHERE email = $1
+            `,
+            [email]
+        )
+
+        return result.rows[0] ?? null;
+    }
+    ```
+
+### 6. Create loginUser function in src/services/auth.service.ts
+- Validate email & password are present - else 400
+- Normalize the email (same as register, so "ABC@x.com " matches "abc@x.com")
+- Find user using findUserByEmailWithPassword
+- If user not found or password_hash is null (e.g. Google login user) - 401
+- Compare provided password with stored password_hash using bcrypt.compare - if not matching - 401
+- Sign access token with userId, email, role and return it
+- Note: Same message "Invalid email or password." for both wrong email & wrong password - so attacker can't find out which emails are registered
+    ```
+    export const loginUser = async (email: string, password: string): Promise<{accessToken: string}> => {
+        if (!email || !password) {
+            throw new AppError(400, "Email and password are required!")
+        }
+
+        const normalizeEmail = email.toLowerCase().trim();
+
+        const user = await findUserByEmailWithPassword(normalizeEmail)
+
+        if(!user?.password_hash){
+            throw new AppError(401, "Invalid email or password.")
+        }
+
+        const isPasswordValid = await bcrypt.compare(password, user.password_hash)
+
+        if(!isPasswordValid){
+            throw new AppError(401,  "Invalid email or password.")
+        }
+
+        const accessToken = signAccessToken({
+            userId: user.id,
+            email: user.email,
+            role: user.role
+        })
+
+        return {accessToken}
+    }
+    ```
+
+### 7. Create login route in src/routes/auth.routes.ts
+- Get email & password from req.body
+- Call loginUser and destructure accessToken from returned object
+- Send response with status 200 and access token
+- Any AppError thrown from service goes to errorHandler via next(error)
     ```
     authRouter.post("/login", async (req, res, next) => {
         try {
             const { email, password } = req.body;
 
-            const accessToken = await loginUser(email, password)
+            const { accessToken } = await loginUser(email, password)
 
             res.status(200).json({
                 success: true,
                 message: "Login successful!",
-                data: {accessToken}
+                data: { accessToken }
             })
 
         } catch (error) {
@@ -979,151 +1121,13 @@
         }
     })
     ```
-
-### Create loginUser function in src/services/auth.service.ts\
-    - Validate email & password are present
-        ```
-        if (!email || !password) {
-            throw new AppError(400, "Email and password are required!")
-        }
-        ```
-    - Normalize the email
-        ```
-        const normalizeEmail = email.toLowerCase().trim();
-        ```
-    - check user is present / already registered using findUserByEmailWithPassword (Need to create findUserByEmailWithPassword in user.repository.ts)
-        ```
-        const user = await findUserByEmailWithPassword(normalizeEmail)
-        ```
-
-        - findUserByEmailWithPassword in user.repository.ts
-            ```
-            export const findUserByEmailWithPassword = async(email: string): Promise<DBUserRowWithPassword | null> => {
-                const result = await pool.query(
-                    `
-                    SELECT id, email, role, password_hash, created_at
-                    FROM users 
-                    WHERE email = $1
-                    `,
-                    [email]
-                )
-
-                return result.rows[0] ?? null;
-            }
-            ```
-    - Validate password_hash is present for the given email
-        ```
-        if(!user?.password_hash){
-            throw new AppError(401, "Invalid email or password.")
-        }
-        ```
-    - Validate provided password and stored password_hash are matching using bcrypt.compare
-        ```
-        const isPasswordValid = await bcrypt.compare(password, user.password_hash)
-        ```
-    - Store the data in accessToken using signAccessToken (Need to create signAccessToken in src/lib/jwt.ts)
-            ```
-            const accessToken = signAccessToken({
-                userId: user.id,
-                email: user.email,
-                role: user.role
-            })
-            ```
-        - signAccessToken
-            ```
-            import { env } from "../config/env";
-            import { TokenPayload } from "../types/user";
-            import jwt, {SignOptions} from "jsonwebtoken"
-
-            export const signAccessToken = (payload: TokenPayload): string => {
-                const options: SignOptions = {
-                    expiresIn: env.jwtAccessExpiresIn as SignOptions['expiresIn']
-                }
-                
-                return jwt.sign(payload, env.jwtAccessSecret, options)
-            }
-            ```
-
-        - For signAccessToken we need types for TokenPayload: Create TokenPayload type in src/types/user
-            ```
-            export type TokenPayload = {
-                userId: string,
-                email: string,
-                role: string
-            }
-            ```
-    - Final login function
-        ```
-        export const loginUser = async (email: string, password: string): Promise<{accessToken: string}> => {
-            if (!email || !password) {
-                throw new AppError(400, "Email and password are required!")
-            }
-
-            const normalizeEmail = email.toLowerCase().trim();
-
-            // Find the user with email & password
-            const user = await findUserByEmailWithPassword(normalizeEmail)
-
-            if(!user?.password_hash){
-                throw new AppError(401, "Invalid email or password.")
-            }
-            
-            const isPasswordValid = await bcrypt.compare(password, user.password_hash)
-
-            if(!isPasswordValid){
-                throw new AppError(401,  "Invalid email or password.")
-            }
-
-            const accessToken = signAccessToken({
-                userId: user.id,
-                email: user.email,
-                role: user.role
-            })
-
-            return {accessToken}
-        }
-        ```
-
-    - Install jsonwebtoken and its types
-        ```
-        npm i jsonwebtoken
-
-        npm i -D @types/jsonwebtoken
-        ```
-    - Add JWT_SECRET & JWT_ACCESS_EXPIRES_IN in .env variables & then add them to env.ts
-        ```
-        JWT_SECRET='super_secret_jwt'
-
-        JWT_ACCESS_EXPIRES_IN='30m'
-        ``` 
-
-        & 
-
-        ```
-        import dotenv from 'dotenv'
-
-        dotenv.config();
-
-        const checkRequiredEnvVariables = (key: string):string => {
-            const value = process.env[key]
-
-            if(!value){
-                throw new Error(`Missing env variable for ${key}`)
-            }
-
-            return value
-        }
-
-        export const env = {
-            port: Number(process.env.PORT ?? 5001),
-            nodeEnv: process.env.NODE_ENV ?? 'development',
-            isProduction: (process.env.NODE_ENV ?? 'development') === 'production',
-            loggerLevel: process.env.LOGGER_LEVEL ?? 'info',
-            databaseUrl: checkRequiredEnvVariables('DATABASE_URL'),
-            jwtAccessSecret: checkRequiredEnvVariables('JWT_SECRET'),
-            jwtAccessExpiresIn: checkRequiredEnvVariables('JWT_ACCESS_EXPIRES_IN')
-        } as const;
-        ```
+- Test: POST /api/auth/login with body
+    ```
+    {
+        "email": "test@example.com",
+        "password": "123456"
+    }
+    ```
 
 
 ## Middlewares
