@@ -1287,3 +1287,8 @@
 
 
 2. Admin Middleware
+
+
+## CRUD
+
+### POST Request
