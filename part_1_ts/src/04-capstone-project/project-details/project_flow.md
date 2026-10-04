@@ -1290,5 +1290,180 @@
 
 
 ## CRUD
+- Why CRUD? CRUD = Create, Read, Update, Delete. These are the 4 basic operations on any resource. Here the resource is a support task (support_tasks table) and each task belongs to a logged-in user.
+- All task routes are protected - only a logged-in user can work with tasks. The user id is taken from the access token (req.user), never from the request body - so a user can't create tasks for someone else.
+- Layers used (see Folder Structure above): Route → Service → Repository → DB
 
-### POST Request
+### POST Request - Create Task
+- Flow
+    ```
+    POST /api/tasks { title }
+    (Authorization: Bearer <accessToken>)
+                │
+                ↓
+        authenticate middleware (auth.middleware.ts)
+                │
+                ├── Missing/Invalid token ──→ AppError 401
+                │
+                ↓
+        POST "/" route (user.task.routes.ts)
+                │
+                ↓
+        createUserTask(req.user.userId, title) (user.task.service.ts)
+                │
+                ↓
+        validateTitle(title)
+                │
+                ├── not a string / empty ──→ AppError 400
+                │
+                ├── more than 100 characters ──→ AppError 400
+                │
+                ↓
+        createTask(userId, trimmedTitle) (user.task.repository.ts)
+                │
+                ↓
+        201 { success, data: { task } }
+    ```
+
+#### 1. Define task types in src/types/task.ts
+- Task -> task data we return from functions
+- TaskRow -> what we query from support_tasks table. Right now both are same, so TaskRow is just an alias of Task. Keeping separate names lets us change the DB row shape later without touching the rest of the code.
+    ```
+    export type Task = {
+        id: string,
+        title: string,
+        status: string,
+        user_id: string,
+        created_at: string,
+        updated_at: string
+    }
+
+    export type TaskRow = Task;
+    ```
+
+#### 2. Create createTask in src/repositories/user.task.repository.ts (DB related logic)
+- Create createTask function. The function will return the created task
+- Write query to insert the new task - `$1`, `$2` are parameterized values (prevents SQL injection)
+- We only insert title & user_id. id, status ('OPEN'), created_at, updated_at get their DEFAULT values from the table (see 003_create_support_tasks_table.sql)
+- `RETURNING` returns the inserted row, so no need of a separate SELECT query
+    ```
+    import { pool } from "../lib/db";
+    import { TaskRow } from "../types/task";
+
+    export const createTask = async(userId: string, title: string): Promise<TaskRow> => {
+        const result = await pool.query<TaskRow>(
+            `
+            INSERT INTO support_tasks (title, user_id)
+            VALUES ($1, $2)
+            RETURNING id, title, status, user_id, created_at, updated_at
+            `,
+            [title, userId]
+        )
+
+        return result.rows[0];
+    }
+    ```
+
+#### 3. Create createUserTask in src/services/user.task.service.ts (Business logic)
+- Create validateTitle helper function
+    - title is `unknown` because it comes directly from req.body - client can send anything (number, object, null...). So we first check it is a string.
+    - Check title is not empty after trim - else 400
+    - Check title length is not more than 100 characters - else 400
+    - Return the trimmed title
+- Create createUserTask function - validate the title and then call createTask from repository
+    ```
+    import { AppError } from "../errors/AppError"
+    import { createTask } from "../repositories/user.task.repository";
+
+    const validateTitle = (title: unknown): string => {
+        if(typeof title !== 'string' || !title.trim()){
+            throw new AppError(400, 'Valid title is required.')
+        }
+
+        const trimmedTitle = title.trim();
+
+        if(trimmedTitle.length > 100){
+            throw new AppError(400, 'Title must be less than 100 characters')
+        }
+
+        return trimmedTitle
+    }
+
+    export const createUserTask = async (userId: string, title: unknown) => {
+        const validTitle = validateTitle(title)
+
+        return createTask(userId, validTitle)
+    }
+    ```
+
+#### 4. Create task route in src/routes/user.task.routes.ts
+- `userTaskRouter.use(authenticate)` -> applies authenticate middleware to all routes of this router. No need to pass authenticate in each route (like we did for /me).
+- post method with "/" path - final endpoint becomes /api/tasks (prefix is added in index.ts)
+- Get userId from req.user (attached by authenticate middleware) and title from req.body
+    - `req.user!` -> `!` (non-null assertion) tells TypeScript that req.user is definitely present. It is safe here because authenticate always runs before this handler.
+- Call createUserTask and send response with status 201 (Created) with the created task
+- Catch the error and pass it to errorHandler using next(error)
+    ```
+    import { Router } from 'express'
+    import { authenticate } from '../middlewares/auth.middleware';
+    import { createUserTask } from '../services/user.task.service';
+
+    export const userTaskRouter = Router();
+
+    userTaskRouter.use(authenticate)  // This middleware is applied to all user task routes
+
+    userTaskRouter.post('/', async (req, res, next) => {
+        try {
+            const task = await createUserTask(req.user!.userId, req.body.title);
+
+            res.status(201).json({
+                success: true,
+                data: {
+                    task,
+                },
+            });
+        } catch (error) {
+            next(error);
+        }
+    });
+    ```
+
+#### 5. Provide the task route to root route in src/routes/index.ts
+- All task routes get "/tasks" prefix → final endpoint becomes /api/tasks
+    ```
+    import { Router } from 'express'
+    import { healthRouter } from './health.route';
+    import { authRouter } from './auth.routes';
+    import { userTaskRouter } from './user.task.routes';
+
+    export const apiRouter = Router()
+
+    apiRouter.use(healthRouter);
+    apiRouter.use("/auth", authRouter)
+    apiRouter.use("/tasks", userTaskRouter)
+    ```
+- Test: POST /api/tasks with header and body
+    ```
+    Authorization: Bearer <accessToken received from /login>
+    ```
+    ```
+    {
+        "title": "My first support task"
+    }
+    ```
+- Response
+    ```
+    {
+        "success": true,
+        "data": {
+            "task": {
+                "id": "<uuid>",
+                "title": "My first support task",
+                "status": "OPEN",
+                "user_id": "<logged-in user id>",
+                "created_at": "...",
+                "updated_at": "..."
+            }
+        }
+    }
+    ```
