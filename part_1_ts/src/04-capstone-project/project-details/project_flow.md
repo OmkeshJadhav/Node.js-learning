@@ -1316,7 +1316,7 @@
                 │
                 ├── not a string / empty ──→ AppError 400
                 │
-                ├── more than 100 characters ──→ AppError 400
+                ├── more than 150 characters ──→ AppError 400
                 │
                 ↓
         createTask(userId, trimmedTitle) (user.task.repository.ts)
@@ -1410,7 +1410,7 @@
 
     export const userTaskRouter = Router();
 
-    userTaskRouter.use(authenticate)  // This middleware is applied to all user task routes
+    userTaskRouter.use(authenticate)  // applies authenticate middleware to all routes of this router. No need to pass authenticate in each route
 
     userTaskRouter.post('/', async (req, res, next) => {
         try {
