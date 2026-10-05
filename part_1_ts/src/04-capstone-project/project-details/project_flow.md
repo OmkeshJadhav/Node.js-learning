@@ -1368,7 +1368,7 @@
 - Create validateTitle helper function
     - title is `unknown` because it comes directly from req.body - client can send anything (number, object, null...). So we first check it is a string.
     - Check title is not empty after trim - else 400
-    - Check title length is not more than 100 characters - else 400
+    - Check title length is not more than 150 characters - else 400
     - Return the trimmed title
 - Create createUserTask function - validate the title and then call createTask from repository
     ```
@@ -1382,8 +1382,8 @@
 
         const trimmedTitle = title.trim();
 
-        if(trimmedTitle.length > 100){
-            throw new AppError(400, 'Title must be less than 100 characters')
+        if(trimmedTitle.length > 150){
+            throw new AppError(400, 'Title must be less than 150 characters')
         }
 
         return trimmedTitle
@@ -1464,6 +1464,120 @@
                 "created_at": "...",
                 "updated_at": "..."
             }
+        }
+    }
+    ```
+
+### GET Request - GET ALL Tasks by userId
+- Why? A logged-in user should see only their own tasks. The userId is taken from the access token (req.user), so a user can never read another user's tasks.
+- Flow
+    ```
+    GET /api/tasks
+    (Authorization: Bearer <accessToken>)
+                │
+                ↓
+        authenticate middleware (auth.middleware.ts)
+                │
+                ├── Missing/Invalid token ──→ AppError 401
+                │
+                ↓
+        GET "/" route (user.task.routes.ts)
+                │
+                ↓
+        getUserTasks(req.user.userId) (user.task.service.ts)
+                │
+                ↓
+        fetchTasksByUserId(userId) (user.task.repository.ts)
+                │
+                ↓
+        200 { success, data: { tasks } }
+    ```
+
+#### 1. Create fetchTasksByUserId in src/repositories/user.task.repository.ts (DB related logic)
+- Create fetchTasksByUserId function. The function will return an array of tasks (Task[])
+- Write query to select all tasks of the user - `$1` is a parameterized value & `[userId]` provides the value for $1 (prevents SQL injection)
+- `WHERE user_id = $1` -> only the logged-in user's tasks
+- `ORDER BY created_at DESC` -> newest task first
+- return `result.rows` -> all rows. If user has no tasks, it is an empty array `[]` (not null), so no need of `?? null` like findUserByEmail
+    ```
+    import { Task, TaskRow } from "../types/task";
+
+    export const fetchTasksByUserId = async(userId: string): Promise<Task[]> => {
+        const result = await pool.query<TaskRow>(
+            `
+            SELECT id, title, status, user_id, created_at, updated_at
+            FROM support_tasks
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            `,
+            [userId]
+        )
+        return result.rows
+    }
+    ```
+
+#### 2. Create getUserTasks in src/services/user.task.service.ts (Business logic)
+- No validation needed here - userId comes from the verified access token, not from the client
+- Just call fetchTasksByUserId from repository. Still keep this service function, so the route never talks to the repository directly (Route → Service → Repository). Later business logic (filters, pagination etc.) can be added here without touching the route.
+    ```
+    import { createTask, fetchTasksByUserId } from "../repositories/user.task.repository";
+    import { Task } from "../types/task";
+
+    export const getUserTasks = async (userId: string): Promise<Task[]> => {
+        return fetchTasksByUserId(userId)
+    }
+    ```
+
+#### 3. Create get route in src/routes/user.task.routes.ts
+- get method with "/" path - final endpoint becomes /api/tasks (same path as POST, but different HTTP method)
+- authenticate already runs for this route because of `userTaskRouter.use(authenticate)` (added in POST Request)
+- Get userId from req.user (`req.user!` - safe because authenticate runs before this handler)
+- Call getUserTasks and send response with status 200 (OK) with the tasks
+- Catch the error and pass it to errorHandler using next(error)
+    ```
+    import { createUserTask, getUserTasks } from '../services/user.task.service';
+
+    userTaskRouter.get('/', async (req, res, next) => {
+        try {
+            const tasks = await getUserTasks(req.user!.userId);
+
+            res.status(200).json({
+                success: true,
+                data: {tasks}
+            })
+        } catch (error) {
+            next(error)
+        }
+    })
+    ```
+- No change needed in src/routes/index.ts - userTaskRouter is already plugged with "/tasks" prefix
+- Test: GET /api/tasks with header
+    ```
+    Authorization: Bearer <accessToken received from /login>
+    ```
+- Response
+    ```
+    {
+        "success": true,
+        "data": {
+            "tasks": [
+                {
+                    "id": "<uuid>",
+                    "title": "My second support task",
+                    "status": "OPEN",
+                    "user_id": "<logged-in user id>",
+                    "created_at": "...",
+                    "updated_at": "..."
+                },
+                {
+                    "id": "<uuid>",
+                    "title": "My first support task",
+                    "status": "OPEN",
+                    "user_id": "<logged-in user id>",
+                    "created_at": "...",
+                    "updated_at": "..."
+                }
+            ]
         }
     }
     ```
