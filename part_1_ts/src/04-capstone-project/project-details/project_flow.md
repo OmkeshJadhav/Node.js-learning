@@ -1581,3 +1581,152 @@
         }
     }
     ```
+
+
+### GET Request - GET individual Task by taskId & userId
+- Why? A logged-in user should be able to open a single task by its id. We check both taskId and userId in the query, so a user can only read their own task. If the task belongs to someone else, it is treated as "not found" (404) - so the user can't even find out that the task exists.
+- Flow
+    ```
+    GET /api/tasks/:taskId
+    (Authorization: Bearer <accessToken>)
+                │
+                ↓
+        authenticate middleware (auth.middleware.ts)
+                │
+                ├── Missing/Invalid token ──→ AppError 401
+                │
+                ↓
+        GET "/:taskId" route (user.task.routes.ts)
+                │
+                ↓
+        getUserTaskById(req.user.userId, req.params.taskId) (user.task.service.ts)
+                │
+                ↓
+        validateTaskId(taskId)
+                │
+                ├── not a valid UUID ──→ AppError 400
+                │
+                ↓
+        fetchTaskByTaskId(taskId, userId) (user.task.repository.ts)
+                │
+                ├── task not found / belongs to another user ──→ AppError 404
+                │
+                ↓
+        200 { success, data: { task } }
+    ```
+
+#### 1. Create fetchTaskByTaskId in src/repositories/user.task.repository.ts (DB related logic)
+- Create fetchTaskByTaskId function. The function will return a task (if found) or null (if not found)
+- Write query to select one task - `$1`, `$2` are parameterized values & `[taskId, userId]` provides the values (prevents SQL injection)
+- `WHERE id = $1 AND user_id = $2` -> task must match the id AND belong to the logged-in user. Without `user_id = $2`, any logged-in user could read any task just by knowing its id.
+- return the result - first row if found, else null (same as findUserByEmail)
+    ```
+    export const fetchTaskByTaskId = async(taskId: string, userId: string): Promise<Task | null> => {
+        const result = await pool.query<TaskRow>(
+            `
+            SELECT id, title, status, user_id, created_at, updated_at
+            FROM support_tasks
+            WHERE  id = $1  AND user_id = $2
+            `,
+            [taskId, userId]
+        )
+
+        return result.rows[0] ?? null
+    }
+    ```
+
+#### 2. Create getUserTaskById in src/services/user.task.service.ts (Business logic)
+- Create validateTaskId helper function
+    - Why? id column of support_tasks is UUID type. If client sends something like "abc" in the URL, Postgres throws error `invalid input syntax for type uuid` → errorHandler treats it as unknown error → 500 Internal Server Error. But it is the client's mistake, so it should be 400 (Bad Request).
+    - So we check taskId format using a UUID regex before hitting the DB - if it doesn't match, throw AppError 400
+    - UUID format: 8-4-4-4-12 hex characters, e.g. `3f2a1b4c-9d8e-4f7a-b6c5-1a2b3c4d5e6f`. `i` flag -> case-insensitive (A-F or a-f both allowed)
+    ```
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+    const validateTaskId = (taskId: string): void => {
+        if(!UUID_REGEX.test(taskId)){
+            throw new AppError(400, 'Invalid task id.')
+        }
+    }
+    ```
+- Create getUserTaskById function
+    - Validate taskId using validateTaskId - else 400
+    - Call fetchTaskByTaskId from repository
+    - If task is null (not found or belongs to another user) - throw AppError 404 (Not Found)
+    - Return the task
+    ```
+    import { createTask, fetchTaskByTaskId, fetchTasksByUserId } from "../repositories/user.task.repository";
+
+    export const getUserTaskById = async (userId: string, taskId: string): Promise<Task | null> => {
+        validateTaskId(taskId)
+
+        const task = await fetchTaskByTaskId(taskId, userId)
+        
+        if(!task){
+            throw new AppError(404, 'Task not found!')
+        }
+        
+        return task;
+    }
+    ```
+    - Note: Order of arguments - service takes (userId, taskId) but repository takes (taskId, userId). Pass them in the correct order.
+
+#### 3. Create get by id route in src/routes/user.task.routes.ts
+- get method with "/:taskId" path - final endpoint becomes /api/tasks/:taskId
+    - `:taskId` is a route parameter - Express reads the value from the URL and puts it in `req.params.taskId`
+    - e.g. GET /api/tasks/abc-123 → req.params.taskId = "abc-123"
+- authenticate already runs for this route because of `userTaskRouter.use(authenticate)` (added in POST Request)
+- Get userId from req.user (`req.user!` - safe because authenticate runs before this handler) and taskId from req.params
+- Call getUserTaskById and send response with status 200 (OK) with the task
+- Catch the error (e.g. AppError 404) and pass it to errorHandler using next(error)
+    ```
+    import { createUserTask, getUserTaskById, getUserTasks } from '../services/user.task.service';
+
+    userTaskRouter.get('/:taskId', async(req, res, next) => {
+        try {
+            const task = await getUserTaskById(req.user!.userId, req.params.taskId)
+
+            res.status(200).json({
+                success: true,
+                data: { task }
+            })
+        } catch (error) {
+            next(error)
+        }
+    })
+    ```
+- No change needed in src/routes/index.ts - userTaskRouter is already plugged with "/tasks" prefix
+- Test: GET /api/tasks/<taskId> with header
+    ```
+    Authorization: Bearer <accessToken received from /login>
+    ```
+- Response
+    ```
+    {
+        "success": true,
+        "data": {
+            "task": {
+                "id": "<taskId>",
+                "title": "My first support task",
+                "status": "OPEN",
+                "user_id": "<logged-in user id>",
+                "created_at": "...",
+                "updated_at": "..."
+            }
+        }
+    }
+    ```
+- Response - when task is not found or belongs to another user (404)
+    ```
+    {
+        "success": false,
+        "message": "Task not found!"
+    }
+    ```
+- Response - when taskId is not a valid UUID, e.g. GET /api/tasks/abc (400)
+    ```
+    {
+        "success": false,
+        "message": "Invalid task id."
+    }
+    ```
