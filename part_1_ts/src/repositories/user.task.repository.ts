@@ -1,5 +1,5 @@
 import { pool } from "../lib/db";
-import { TaskRow } from "../types/task";
+import { Task, TaskRow } from "../types/task";
 
 export const createTask = async(userId: string, title: string): Promise<TaskRow> => {
     const result = await pool.query<TaskRow>(
@@ -12,4 +12,17 @@ export const createTask = async(userId: string, title: string): Promise<TaskRow>
     )
 
     return result.rows[0];
+}
+
+export const fetchTasksByUserId = async(userId: string): Promise<Task[]> => {
+    const result = await pool.query<TaskRow>(
+        `
+        SELECT id, title, status, user_id, created_at, updated_at
+        FROM support_tasks
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+        `,
+        [userId]
+    )
+    return result.rows
 }

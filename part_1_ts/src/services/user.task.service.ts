@@ -1,5 +1,6 @@
 import { AppError } from "../errors/AppError"
-import { createTask } from "../repositories/user.task.repository";
+import { createTask, fetchTasksByUserId } from "../repositories/user.task.repository";
+import { Task } from "../types/task";
 
 const validateTitle = (title: unknown): string => {
     if(typeof title !== 'string' || !title.trim()){
@@ -19,4 +20,8 @@ export const createUserTask = async (userId: string, title: unknown) => {
     const validTitle = validateTitle(title)
 
     return createTask(userId, validTitle)
+}
+
+export const getUserTasks = async (userId: string): Promise<Task[]> => {
+    return fetchTasksByUserId(userId)
 }
