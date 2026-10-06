@@ -2017,3 +2017,133 @@
         "message": "Task not found"
     }
     ```
+
+
+### DELETE request - Delete Task
+- Why? A logged-in user should be able to delete their own task. Same as GET by id & PATCH, we check both taskId and userId in the query, so a user can only delete their own task. If the task belongs to someone else, it is treated as "not found" (404).
+- Flow
+    ```
+    DELETE /api/tasks/:taskId
+    (Authorization: Bearer <accessToken>)
+                │
+                ↓
+        authenticate middleware (auth.middleware.ts)
+                │
+                ├── Missing/Invalid token ──→ AppError 401
+                │
+                ↓
+        DELETE "/:taskId" route (user.task.routes.ts)
+                │
+                ↓
+        deleteUserTask(req.params.taskId, req.user.userId) (user.task.service.ts)
+                │
+                ↓
+        validateTaskId(taskId)
+                │
+                ├── not a valid UUID ──→ AppError 400
+                │
+                ↓
+        deleteTask(taskId, userId) (user.task.repository.ts)
+                │
+                ├── no row deleted (not found / belongs to another user) ──→ AppError 404
+                │
+                ↓
+        200 { success, message }
+    ```
+
+#### 1. Create deleteTask in src/repositories/user.task.repository.ts (DB related logic)
+- Create deleteTask function. The function will return `true` (if task was deleted) or `false` (if no task was deleted)
+- Write query to delete one task - `$1`, `$2` are parameterized values & `[taskId, userId]` provides the values (prevents SQL injection)
+- `WHERE id = $1 AND user_id = $2` -> delete only if the task matches the id AND belongs to the logged-in user. Without `user_id = $2`, any logged-in user could delete any task just by knowing its id.
+- No `RETURNING` here - we don't need the deleted row back, we only need to know whether something was deleted
+- `result.rowCount` -> number of rows affected by the query (for DELETE - number of rows deleted)
+    - task found & deleted → rowCount = 1 → return true
+    - task not found / belongs to another user → rowCount = 0 → return false
+    - Why `?? 0`? In pg types, rowCount is `number | null`, so we convert null to 0 before comparing
+    ```
+    export const deleteTask = async(taskId: string, userId: string): Promise<boolean> => {
+        const result = await pool.query(
+            `
+            DELETE FROM support_tasks
+            WHERE id = $1 AND user_id = $2
+            `,
+            [taskId, userId]
+        )
+
+        return (result.rowCount ?? 0 ) > 0;
+    }
+    ```
+- Note: `pool.query` has no `<TaskRow>` generic here, because DELETE without RETURNING returns no rows
+
+#### 2. Create deleteUserTask in src/services/user.task.service.ts (Business logic)
+- Validate taskId using validateTaskId (same one used in getUserTaskById & updateUserTask) - else 400
+- Call deleteTask from repository
+    - `await` is important here. Without `await`, deletedTask is a Promise (not a boolean). A Promise is always truthy, so `if(!deletedTask)` never runs and 404 is never thrown.
+- If deletedTask is false (not found or belongs to another user) - throw AppError 404 (Not Found)
+- Return type is `Promise<void>` - nothing to return. If no error is thrown, it means the task was deleted.
+    ```
+    import { createTask, deleteTask, fetchTaskByTaskId, fetchTasksByUserId, updateTaskByPatch } from "../repositories/user.task.repository";
+
+    export const deleteUserTask = async (taskId: string, userId: string): Promise<void> => {
+        validateTaskId(taskId);
+
+        const deletedTask = await deleteTask(taskId, userId)
+
+        if(!deletedTask){
+            throw new AppError(404, "Task not found.")
+        }
+    }
+    ```
+    - Note: Order of arguments - here both service and repository take (taskId, userId), same as updateUserTask.
+
+#### 3. Create delete route in src/routes/user.task.routes.ts
+- delete method with "/:taskId" path - final endpoint becomes /api/tasks/:taskId (same path as GET by id & PATCH, but different HTTP method)
+- authenticate already runs for this route because of `userTaskRouter.use(authenticate)` (added in POST Request)
+- Get taskId from req.params and userId from req.user (`req.user!` - safe because authenticate runs before this handler)
+- Call deleteUserTask and send response with status 200 (OK) with a success message
+    - There is no task to send back (it is deleted), so we send only a message
+    - Alternative: status 204 (No Content) with `res.status(204).send()` - also common for DELETE, but 204 can't have a response body. We use 200 so that the client gets a message.
+- Catch the error (e.g. AppError 400/404) and pass it to errorHandler using next(error)
+    ```
+    import { createUserTask, deleteUserTask, getUserTaskById, getUserTasks, updateUserTask } from '../services/user.task.service';
+
+    userTaskRouter.delete('/:taskId', async (req, res, next) => {
+        try {
+            await deleteUserTask(req.params.taskId, req.user!.userId)
+
+            res.status(200).json({
+                success: true,
+                message: `Task ${req.params.taskId} is deleted successfully.`
+            })
+        } catch (error) {
+            next(error)
+        }
+    })
+    ```
+    - Note: deleteUserTask returns `void`, so there is no need to store its result in a variable (e.g. `const task = await ...`) - just `await` it.
+- No change needed in src/routes/index.ts - userTaskRouter is already plugged with "/tasks" prefix
+- Test: DELETE /api/tasks/<taskId> with header (no body needed)
+    ```
+    Authorization: Bearer <accessToken received from /login>
+    ```
+- Response
+    ```
+    {
+        "success": true,
+        "message": "Task <taskId> is deleted successfully."
+    }
+    ```
+- Response - when task is not found, belongs to another user, or is already deleted (404)
+    ```
+    {
+        "success": false,
+        "message": "Task not found."
+    }
+    ```
+- Response - when taskId is not a valid UUID, e.g. DELETE /api/tasks/abc (400)
+    ```
+    {
+        "success": false,
+        "message": "Invalid task id."
+    }
+    ```
