@@ -1730,3 +1730,290 @@
         "message": "Invalid task id."
     }
     ```
+
+
+### PATCH Request - Update Task Title and/or Status
+- Why? A logged-in user should be able to change the title and/or status of their own task (e.g. OPEN → IN PROGRESS → RESOLVED). Same as GET by id, we check both taskId and userId in the query, so a user can only update their own task.
+- PATCH vs PUT
+    - PUT -> replaces the whole resource. Client must send ALL fields.
+    - PATCH -> partial update. Client sends ONLY the fields it wants to change, other fields stay the same.
+    - So here the client can send only title, only status, or both. id, user_id, created_at never change.
+    ```
+    { "status": "RESOLVED" }                      → only status is updated, title stays same
+    { "title": "New title" }                      → only title is updated, status stays same
+    { "title": "New title", "status": "OPEN" }    → both are updated
+    {}                                            → 400 (nothing to update)
+    ```
+- Flow
+    ```
+    PATCH /api/tasks/:taskId { title?, status? }
+    (Authorization: Bearer <accessToken>)
+                │
+                ↓
+        authenticate middleware (auth.middleware.ts)
+                │
+                ├── Missing/Invalid token ──→ AppError 401
+                │
+                ↓
+        PATCH "/:taskId" route (user.task.routes.ts)
+                │
+                ↓
+        updateUserTask(req.params.taskId, req.user.userId, title, status) (user.task.service.ts)
+                │
+                ↓
+        validateTaskId(taskId)
+                │
+                ├── not a valid UUID ──→ AppError 400
+                │
+                ↓
+        title & status both not sent?
+                │
+                ├── yes (empty body) ──→ AppError 400
+                │
+                ↓
+        title sent? → validateTitle(title)
+                │
+                ├── not a string / empty ──→ AppError 400
+                │
+                ├── more than 150 characters ──→ AppError 400
+                │
+                ↓
+        status sent? → validateStatus(status)
+                │
+                ├── not one of OPEN / IN PROGRESS / RESOLVED ──→ AppError 400
+                │
+                ↓
+        updateTaskByPatch(taskId, userId, validTitle, validStatus) (user.task.repository.ts)
+                │
+                ├── task not found / belongs to another user ──→ AppError 404
+                │
+                ↓
+        200 { success, data: { task } }
+    ```
+
+#### 1. Create updateTaskByPatch in src/repositories/user.task.repository.ts (DB related logic)
+- Create updateTaskByPatch function. The function will return the updated task (if found) or null (if not found)
+- `title?: string, status?: string` -> both are optional. If the client didn't send a field, the service passes `undefined`.
+- Problem: how to write ONE UPDATE query, when we don't know which fields will be sent? There are 2 ways:
+
+##### Option A - COALESCE (used in the project)
+- Query stays fixed. For the field that was not sent, we pass `null` and `COALESCE` keeps the current value of the column.
+- `COALESCE(a, b)` -> returns the first value that is not null
+    - `COALESCE($1, title)` -> if $1 has a value, use it. If $1 is null, use the current `title` (i.e. no change)
+    ```
+    COALESCE('New title', title)   → 'New title'   (updated)
+    COALESCE(NULL, title)          → title         (same as before)
+    ```
+- `[title ?? null, status ?? null, taskId, userId]` -> `undefined` is converted to `null`, so COALESCE can fall back to the current value
+- `updated_at = NOW()` -> updated_at has DEFAULT NOW() only for INSERT. On UPDATE, Postgres doesn't change it automatically, so we set it manually.
+- `WHERE id = $3 AND user_id = $4` -> update only if the task matches the id AND belongs to the logged-in user. If not, no row is updated and `result.rows` is an empty array.
+- `RETURNING` returns the updated row, so no need of a separate SELECT query
+- return the result - updated row if found, else null (same as fetchTaskByTaskId)
+    - Why `?? null`? If no row is updated, `result.rows[0]` is `undefined`. The return type says `Task | null`, so we convert `undefined` to `null` to keep it consistent with other repository functions.
+    ```
+    // Option A - COALESCE: fields not sent are passed as null, and COALESCE($n, column) keeps the current value
+    export const updateTaskByPatch = async (taskId: string, userId: string, title?: string, status?: string): Promise<Task | null> => {
+        const result = await pool.query<TaskRow>(
+            `
+            UPDATE support_tasks
+            SET title = COALESCE($1, title),
+                status = COALESCE($2, status),
+                updated_at = NOW()
+            WHERE id = $3 AND user_id = $4
+            RETURNING id, title, status, user_id, created_at, updated_at
+            `,
+            [title ?? null, status ?? null, taskId, userId]
+        )
+
+        return result.rows[0] ?? null
+    }
+    ```
+- Pros: Simple, one fixed query, easy to read.
+- Cons: We can never set a column TO null using this (because null means "keep the old value"). It is fine here because title & status are both NOT NULL.
+
+##### Option B - Dynamic SET clause (kept commented out in the repository for reference)
+- Build the SET clause in JS - add `column = $n` only for the fields that were sent.
+- `values` array holds the parameter values. `$${values.length}` -> after push, the length gives the next placeholder number ($1, $2...)
+    - `$$` inside a template string -> first `$` is the literal `$` character, then `${...}` is the JS expression. So `` `title = $${values.length}` `` becomes `title = $1`
+- taskId & userId are pushed at the end, so their placeholders are always the last two: `$${values.length - 1}` and `$${values.length}`
+- e.g. only status sent → `SET status = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3` with values `[status, taskId, userId]`
+- Column names (`title`, `status`) are hardcoded in our code. NEVER build column names from `req.body` keys - that would allow SQL injection through column names. Only values go through `$n` placeholders.
+    ```
+    export const updateTaskByPatch = async (taskId: string, userId: string, title?: string, status?: string): Promise<Task | null> => {
+        const fields: string[] = []
+        const values: unknown[] = []
+
+        if (title !== undefined) {
+            values.push(title)
+            fields.push(`title = $${values.length}`)
+        }
+
+        if (status !== undefined) {
+            values.push(status)
+            fields.push(`status = $${values.length}`)
+        }
+
+        values.push(taskId, userId)
+
+        const result = await pool.query<TaskRow>(
+            `
+            UPDATE support_tasks
+            SET ${fields.join(', ')}, updated_at = NOW()
+            WHERE id = $${values.length - 1} AND user_id = $${values.length}
+            RETURNING id, title, status, user_id, created_at, updated_at
+            `,
+            values
+        )
+
+        return result.rows[0] ?? null
+    }
+    ```
+- Pros: Scales well for tables with many optional fields. Can also set a nullable column to null.
+- Cons: More code, harder to read.
+- Both options have the same name & signature, so to switch - comment out Option A and uncomment Option B. No change needed in service or route.
+
+#### 2. Create updateUserTask in src/services/user.task.service.ts (Business logic)
+- Create validateStatus helper function
+    - Why? status column has a CHECK constraint - only 'OPEN', 'IN PROGRESS', 'RESOLVED' are allowed (see 003_create_support_tasks_table.sql). If client sends "DONE", Postgres throws error → errorHandler treats it as unknown error → 500. But it is the client's mistake, so it should be 400 (same reason as validateTaskId).
+    - status is `unknown` because it comes directly from req.body (same as title in validateTitle). So we first check it is a string.
+    - `TASK_STATUSES.includes(status)` -> checks status is one of the allowed values - else 400
+    - Return the valid status
+    ```
+    const TASK_STATUSES = ['OPEN', 'IN PROGRESS', 'RESOLVED']
+
+    const validateStatus = (status: unknown): string => {
+        if (typeof status !== 'string' || !TASK_STATUSES.includes(status)) {
+            throw new AppError(400, 'Invalid task status.')
+        }
+
+        return status
+    }
+    ```
+    - Common mistake: `if(status != 'OPEN' || status != 'IN PROGRESS' || status != 'RESOLVED')` -> this is ALWAYS true, because any value is "not equal" to at least two of the three. So it rejects every status, even valid ones. Correct logic needs `&&` (not this AND not this AND not this) - or simply use `includes` like above.
+- Create updateUserTask function
+    - `title?: unknown, status?: unknown` -> optional (client may not send them) and unknown (they come directly from req.body, so can be any type)
+    - Validate taskId using validateTaskId (same one used in getUserTaskById) - else 400
+    - If both title and status are not sent (empty body `{}`) - throw AppError 400. Without this check, `{}` would only change updated_at and return 200, which is misleading.
+    - Validate only the fields that were sent
+        - `title !== undefined ? validateTitle(title) : undefined` -> if title was sent, validate it. Else keep it undefined (repository will not change it).
+        - Use `!== undefined`, NOT `if(title)`. With `if(title)`, an empty string `""` is falsy, so it would be silently skipped instead of being rejected with 400.
+        - `null` is not `undefined`, so `{ "title": null }` goes to validateTitle and gets 400 (title can't be null)
+    - Call updateTaskByPatch from repository with validTitle & validStatus
+        - `await` is important here. Without `await`, task is a Promise (not the row). A Promise is always truthy, so `if(!task)` never runs and 404 is never thrown.
+    - If task is null (not found or belongs to another user) - throw AppError 404 (Not Found)
+    - Return the updated task
+    ```
+    import { createTask, fetchTaskByTaskId, fetchTasksByUserId, updateTaskByPatch } from "../repositories/user.task.repository";
+
+    export const updateUserTask = async (taskId: string, userId: string, title?: unknown, status?: unknown): Promise<Task | null> => {
+
+        validateTaskId(taskId)
+
+        if (title === undefined && status === undefined) {
+            throw new AppError(400, 'At least one field (title or status) is required.')
+        }
+
+        const validTitle = title !== undefined ? validateTitle(title) : undefined
+
+        const validStatus = status !== undefined ? validateStatus(status) : undefined
+
+        const task = await updateTaskByPatch(taskId, userId, validTitle, validStatus)
+
+        if (!task) {
+            throw new AppError(404, 'Task not found')
+        }
+
+        return task
+    }
+    ```
+    - Note: Order of arguments - here both service and repository take (taskId, userId, ...). This is different from getUserTaskById which takes (userId, taskId).
+
+#### 3. Create patch route in src/routes/user.task.routes.ts
+- patch method with "/:taskId" path - final endpoint becomes /api/tasks/:taskId (same path as GET by id, but different HTTP method)
+- authenticate already runs for this route because of `userTaskRouter.use(authenticate)` (added in POST Request)
+- Get taskId from req.params, userId from req.user (`req.user!` - safe because authenticate runs before this handler), title & status from req.body
+    - If client doesn't send a field, `req.body.title` / `req.body.status` is `undefined` - so the route passes it as it is and the service decides what to do
+- Call updateUserTask and send response with status 200 (OK) with the updated task
+- Catch the error (e.g. AppError 400/404) and pass it to errorHandler using next(error)
+    ```
+    import { createUserTask, getUserTaskById, getUserTasks, updateUserTask } from '../services/user.task.service';
+
+    userTaskRouter.patch('/:taskId', async(req, res, next) => {
+        try {
+            const task = await updateUserTask(
+                req.params.taskId,
+                req.user!.userId,
+                req.body.title,
+                req.body.status
+            )
+
+            res.status(200).json({
+                success: true,
+                data: { task }
+            })
+        } catch (error) {
+            next(error)
+        }
+    })
+    ```
+- No change needed in src/routes/index.ts - userTaskRouter is already plugged with "/tasks" prefix
+- Test: PATCH /api/tasks/<taskId> with header and body
+    ```
+    Authorization: Bearer <accessToken received from /login>
+    ```
+    ```
+    {
+        "status": "IN PROGRESS"
+    }
+    ```
+- Response - only status is changed, title stays the same
+    ```
+    {
+        "success": true,
+        "data": {
+            "task": {
+                "id": "<taskId>",
+                "title": "My first support task",
+                "status": "IN PROGRESS",
+                "user_id": "<logged-in user id>",
+                "created_at": "...",
+                "updated_at": "<new time>"
+            }
+        }
+    }
+    ```
+- Response - when body is empty `{}` (400)
+    ```
+    {
+        "success": false,
+        "message": "At least one field (title or status) is required."
+    }
+    ```
+- Response - when title is sent but empty/invalid, e.g. "title": "" (400)
+    ```
+    {
+        "success": false,
+        "message": "Valid title is required."
+    }
+    ```
+- Response - when status is sent but not one of OPEN / IN PROGRESS / RESOLVED, e.g. "status": "DONE" (400)
+    ```
+    {
+        "success": false,
+        "message": "Invalid task status."
+    }
+    ```
+- Response - when taskId is not a valid UUID, e.g. PATCH /api/tasks/abc (400)
+    ```
+    {
+        "success": false,
+        "message": "Invalid task id."
+    }
+    ```
+- Response - when task is not found or belongs to another user (404)
+    ```
+    {
+        "success": false,
+        "message": "Task not found"
+    }
+    ```
