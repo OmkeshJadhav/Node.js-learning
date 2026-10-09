@@ -2147,3 +2147,463 @@
         "message": "Invalid task id."
     }
     ```
+
+
+## Admin + Search/Filters
+- Why? A normal user sees only their own tasks (GET /api/tasks). An ADMIN should see ALL tasks of ALL users, and should be able to filter them:
+    - search -> tasks whose title contains some text (case-insensitive)
+    - status -> tasks with a given status (OPEN / IN PROGRESS / RESOLVED)
+- Filters come from the URL query string (the part after `?`), NOT from the body. GET requests don't have a body.
+    ```
+    GET /api/admin/tasks                              → all tasks
+    GET /api/admin/tasks?search=login                 → title contains "login"
+    GET /api/admin/tasks?status=open                  → only OPEN tasks
+    GET /api/admin/tasks?search=login&status=open     → title contains "login" AND status is OPEN
+    ```
+- Only users with role 'ADMIN' can call this route. role column of users table has DEFAULT 'USER' (see 002_create_user_table.sql), so to test, make a user admin manually in DB:
+    ```
+    UPDATE users SET role = 'ADMIN' WHERE email = 'admin@example.com';
+    ```
+    - Login again after this - role is stored inside the JWT, so the old token still has role 'USER'
+- Flow
+    ```
+    GET /api/admin/tasks?search=...&status=...
+    (Authorization: Bearer <accessToken>)
+                │
+                ↓
+        authenticate middleware (auth.middleware.ts)
+                │
+                ├── Missing/Invalid token ──→ AppError 401
+                │
+                ↓
+        requireAdmin middleware (admin.middleware.ts)
+                │
+                ├── req.user.role is not 'ADMIN' ──→ AppError 403
+                │
+                ↓
+        GET "/" route (admin.task.routes.ts)
+                │
+                ├── search/status is not a single string (e.g. array) ──→ AppError 400
+                │
+                ↓
+        getAdminTasks({ search, status }) (admin.task.service.ts)
+                │
+                ↓
+        clean values (trim, uppercase status, "" → undefined)
+                │
+                ├── status not one of OPEN / IN PROGRESS / RESOLVED ──→ AppError 400
+                │
+                ↓
+        findAllTasks({ search, status }) (admin.task.repository.ts)
+                │
+                ↓
+        build WHERE clause only for the filters that were sent
+                │
+                ↓
+        200 { success, data: { tasks } }
+    ```
+
+### 1. Move TASK_STATUSES to src/types/task.ts (shared by user & admin service)
+- Earlier TASK_STATUSES was inside user.task.service.ts. Now admin.task.service.ts also needs it, so we move it to types/task.ts - one place for the list, both services import it.
+    ```
+    export const TASK_STATUSES = ["OPEN", "IN PROGRESS", "RESOLVED"] as const;
+    export type TaskStatus = (typeof TASK_STATUSES)[number]
+    ```
+- Line 1 - `as const`
+    - Without `as const`, TypeScript sees the array as `string[]` - "an array of any strings". It forgets the exact values.
+    - With `as const`, TypeScript remembers the exact values and makes the array readonly (can't push/change it):
+    ```
+    ["OPEN", "IN PROGRESS", "RESOLVED"]            → type: string[]
+    ["OPEN", "IN PROGRESS", "RESOLVED"] as const   → type: readonly ["OPEN", "IN PROGRESS", "RESOLVED"]
+    ```
+- Line 2 - `(typeof TASK_STATUSES)[number]` - read it in 2 steps
+    - Step 1: `typeof TASK_STATUSES` -> "give me the TYPE of this variable" → `readonly ["OPEN", "IN PROGRESS", "RESOLVED"]`
+    - Step 2: `[number]` -> "what type do I get if I read this array at ANY number index (0, 1, 2...)?" → any one of its items
+    - Result:
+    ```
+    type TaskStatus = "OPEN" | "IN PROGRESS" | "RESOLVED"
+    ```
+    - It is the same as writing that union by hand, but now the values are written only ONCE. If we add a new status (e.g. "CLOSED") to the array, TaskStatus updates automatically.
+    - This only works because of `as const`. Without it, `(typeof TASK_STATUSES)[number]` would just be `string`.
+- Why `status as TaskStatus` when calling includes?
+    - `TASK_STATUSES.includes(x)` now expects x to be a `TaskStatus`, but status is a plain `string`. TypeScript complains: "string is not assignable to TaskStatus".
+    - `as TaskStatus` tells TypeScript "trust me, treat it as TaskStatus" - it is safe here because includes() is exactly the runtime check that tells us whether it really is one.
+- Update validateStatus in user.task.service.ts to import from types
+    ```
+    import { Task, TASK_STATUSES, TaskStatus } from "../types/task";
+
+    const validateStatus = (status: unknown): string => {
+        if (typeof status !== 'string' || !TASK_STATUSES.includes(status as TaskStatus)) {
+            throw new AppError(400, 'Invalid task status.')
+        }
+
+        return status
+    }
+    ```
+
+### 2. Define admin types in src/types/admin.ts
+- AdminTaskListQuery -> what the route sends to the service (raw values from req.query)
+- AdminTaskListFilters -> what the service sends to the repository (cleaned & validated values)
+- AdminTaskListResponse -> what the service returns
+- Both query & filters are optional (`?`) - client may send none, one or both. Right now Query and Filters look the same, but keeping separate names makes it clear which one is raw and which one is cleaned (same idea as Task & TaskRow).
+    ```
+    import { Task } from "./task"
+
+    export type AdminTaskListResponse = {
+        tasks: Task[]
+    }
+
+    export type AdminTaskListQuery = {
+        search?: string,
+        status?: string
+    }
+
+    export type AdminTaskListFilters = {
+        search?: string,
+        status?: string
+    }
+    ```
+
+### 3. Create findAllTasks in src/repositories/admin.task.repository.ts (DB related logic)
+- Create findAllTasks function. The function will return an array of tasks (Task[]) - an empty array `[]` if nothing matches
+- No `WHERE user_id = ...` here - admin sees tasks of all users
+- Problem: the WHERE part depends on which filters were sent. We have 4 cases:
+    ```
+    nothing sent          → (no WHERE)
+    only search           → WHERE title ILIKE $1
+    only status           → WHERE status = $1
+    search + status       → WHERE title ILIKE $1 AND status = $2
+    ```
+- So we can't write one fixed query. We BUILD the WHERE part in JS - same idea as Option B (Dynamic SET clause) in PATCH.
+
+#### 3.1 The 3 helper variables (lines 6-10)
+- Code
+    ```
+    const conditions: string[] = []   // pieces of SQL, e.g. "title ILIKE $1"
+    const values: unknown[] = []      // the actual values for $1, $2...
+    let paramIndex = 1;               // the next placeholder number to use
+    ```
+- Think of it as 2 lists that always grow together:
+    - conditions -> what to check (SQL text with placeholder)
+    - values -> the value for that placeholder
+    - conditions[0] uses $1 → its value is values[0], conditions[1] uses $2 → its value is values[1]
+- paramIndex -> keeps track of the next number. Starts at 1 (Postgres placeholders start at $1, not $0). After using a number we do `paramIndex++`.
+- `$${paramIndex}` -> first `$` is the literal `$` character, then `${paramIndex}` is the JS value. So `` `status = $${paramIndex}` `` becomes `status = $1` (same as in PATCH Option B)
+
+#### 3.2 search filter (lines 12-18)
+- Code
+    ```
+    if(filters.search){
+        conditions.push(`title ILIKE $${paramIndex}`)
+        // Escape \, % and _ so they are matched literally instead of acting as ILIKE wildcards
+        const escapedSearch = filters.search.replace(/[\\%_]/g, "\\$&")
+        values.push(`%${escapedSearch}%`)
+        paramIndex++
+    }
+    ```
+- `ILIKE` -> same as `LIKE` but case-insensitive. So "login", "LOGIN", "Login" all match.
+- In LIKE/ILIKE, 2 characters have special meaning (wildcards):
+    - `%` -> any number of characters (0 or more)
+    - `_` -> exactly one character
+- `%${escapedSearch}%` -> `%` on both sides means "title CONTAINS this text anywhere"
+    ```
+    search = "login"   →  value = "%login%"
+    matches: "login bug", "Cannot LOGIN", "fix login page"
+    ```
+- Why escape? If the user's search text itself contains `%` or `_`, Postgres treats it as a wildcard, not as a normal character:
+    ```
+    search = "%"       →  "%%%"     → matches EVERY title (wrong)
+    search = "50%"     →  "%50%%"   → matches "50", "500", "5000 users" (wrong)
+    search = "a_b"     →  "%a_b%"   → matches "a_b" but also "axb", "a b" (wrong)
+    ```
+- `.replace(/[\\%_]/g, "\\$&")` -> put a backslash `\` before every `\`, `%` and `_`. In LIKE, `\` is the default escape character, so `\%` means "a real % character".
+    - `/[\\%_]/` -> regex that matches one character: `\` or `%` or `_`. (`\\` in regex = one real backslash)
+    - `g` -> global - replace ALL matches, not only the first one
+    - `"\\$&"` -> the replacement. `\\` in a JS string = one real `\`. `$&` = "the character that was matched". So `%` becomes `\%`, `_` becomes `\_`
+    - We escape `\` also, because otherwise a backslash typed by the user would escape the next character
+    ```
+    search = "50%"     →  escaped "50\%"    →  value "%50\%%"    → only titles containing "50%"
+    search = "a_b"     →  escaped "a\_b"    →  value "%a\_b%"    → only titles containing "a_b"
+    ```
+- Note: This is NOT about SQL injection - the value still goes through `$1`, so it is already safe. Escaping only makes the search results correct.
+
+#### 3.3 status filter (lines 19-23)
+- Code
+    ```
+    if(filters.status){
+        conditions.push(`status = $${paramIndex}`)
+        values.push(filters.status)
+        paramIndex++
+    }
+    ```
+- Exact match - no wildcards needed. Service already checked it is one of OPEN / IN PROGRESS / RESOLVED.
+- If search was also sent, paramIndex is already 2 here, so this becomes `status = $2`. If search was not sent, it becomes `status = $1`. That is why we use paramIndex instead of hardcoding numbers.
+
+#### 3.4 Build the WHERE clause (line 25)
+- Code
+    ```
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
+    ```
+- If there is at least one condition → join them with " AND " and put "WHERE" in front
+- If there are no conditions → empty string (no WHERE at all → all tasks)
+- `join(" AND ")` -> joins array items with " AND " in between. With 1 item, no AND is added.
+    ```
+    conditions = []                                       →  ""
+    conditions = ["status = $1"]                          →  "WHERE status = $1"
+    conditions = ["title ILIKE $1", "status = $2"]        →  "WHERE title ILIKE $1 AND status = $2"
+    ```
+
+#### 3.5 Run the query (lines 27-36)
+- Put whereClause inside the query using `${whereClause}` and pass the values array
+    ```
+    import { pool } from "../lib/db";
+    import { AdminTaskListFilters } from "../types/admin";
+    import { Task, TaskRow } from "../types/task";
+
+    export const findAllTasks = async (filters: AdminTaskListFilters): Promise<Task[]> => {
+        const conditions: string[] = []
+
+        const values: unknown[] = []
+
+        let paramIndex = 1;
+
+        if(filters.search){
+            conditions.push(`title ILIKE $${paramIndex}`)
+            // Escape \, % and _ so they are matched literally instead of acting as ILIKE wildcards
+            const escapedSearch = filters.search.replace(/[\\%_]/g, "\\$&")
+            values.push(`%${escapedSearch}%`)
+            paramIndex++
+        }
+        if(filters.status){
+            conditions.push(`status = $${paramIndex}`)
+            values.push(filters.status)
+            paramIndex++
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
+
+        const result = await pool.query<TaskRow>(
+            `
+            SELECT id, title, status, user_id, created_at, updated_at
+            FROM support_tasks
+            ${whereClause} 
+            ORDER BY created_at DESC
+            `,
+            values
+        )
+        return result.rows;
+    }
+    ```
+- Full example - `?search=login&status=open`
+    ```
+    conditions = ["title ILIKE $1", "status = $2"]
+    values     = ["%login%", "OPEN"]
+
+    Final SQL:
+    SELECT id, title, status, user_id, created_at, updated_at
+    FROM support_tasks
+    WHERE title ILIKE $1 AND status = $2
+    ORDER BY created_at DESC
+    ```
+- Is `${whereClause}` safe? We put a JS string directly into SQL, but whereClause contains ONLY text written by us ("title ILIKE $1", "status = $2"). The user's values never go into the SQL text - they go only into the `values` array → `$1`, `$2`. So no SQL injection.
+
+### 4. Create getAdminTasks in src/services/admin.task.service.ts (Business logic)
+- Clean the raw values, validate status, then call findAllTasks from repository
+    ```
+    import { AppError } from "../errors/AppError";
+    import { findAllTasks } from "../repositories/admin.task.repository";
+    import { AdminTaskListQuery, AdminTaskListResponse } from "../types/admin";
+    import { TASK_STATUSES, TaskStatus } from "../types/task";
+
+    export const getAdminTasks = async (query: AdminTaskListQuery): Promise<AdminTaskListResponse> => {
+        const search = query.search?.trim() || undefined
+        const status = query.status?.toUpperCase().trim() || undefined
+
+        if (status && !TASK_STATUSES.includes(status as TaskStatus)) {
+            throw new AppError(400, 'Status must be one of Open, In Progress or Resolved')
+        }
+
+        const tasks = await findAllTasks({ search, status })
+
+        return { tasks }
+    }
+    ```
+
+#### 4.1 Cleaning search & status (lines 8-9) - read from left to right
+- Code
+    ```
+    const search = query.search?.trim() || undefined
+    const status = query.status?.toUpperCase().trim() || undefined
+    ```
+- `?.` (optional chaining) -> if query.search is undefined (not sent), STOP and give undefined, instead of crashing with "Cannot read properties of undefined (reading 'trim')". It stops the whole chain, so `.toUpperCase().trim()` are also skipped.
+- `.trim()` -> remove spaces at start & end. "  login " → "login"
+- `.toUpperCase()` (only for status) -> client can send "open", "Open", "OPEN" - all become "OPEN". DB stores uppercase, so this makes the API friendly.
+- `|| undefined` -> if the result is an empty string `""`, change it to undefined
+    - `""` is falsy, so `"" || undefined` → undefined
+    - Why? `?search=` or `?search=%20%20` (only spaces) means "no search really". If we keep `""`, it is still "sent" in our code. With undefined, the repository's `if(filters.search)` skips it → no filter.
+- What we get for different inputs
+    ```
+    URL                         query.status      status (after cleaning)
+    (not sent)                  undefined         undefined     → no status filter
+    ?status=                    ""                undefined     → no status filter
+    ?status=   open             "   open"         "OPEN"
+    ?status=in progress         "in progress"     "IN PROGRESS"
+    ?status=done                "done"            "DONE"        → 400 (next step)
+    ```
+
+#### 4.2 Validate status (lines 12-14)
+- `if (status && ...)` -> validate only if status was sent (after cleaning). If undefined, skip - admin just doesn't want a status filter.
+- `TASK_STATUSES.includes(status as TaskStatus)` -> same check as validateStatus in user.task.service.ts (see step 1 for why `as TaskStatus`)
+- Why validate here? Wrong status like "DONE" would not crash the DB (it's just `status = 'DONE'`), it would return `[]`. But returning 400 tells the client clearly that "DONE" is not a valid status, instead of silently returning nothing.
+- search has no validation - any text is a valid search.
+
+#### 4.3 Call repository and return
+- Pass the cleaned values `{ search, status }` (AdminTaskListFilters) to findAllTasks
+- Return `{ tasks }` -> matches AdminTaskListResponse. The route sends this object as `data`, so response becomes `data: { tasks: [...] }` (same shape as GET /api/tasks)
+
+### 5. Create admin task route in src/routes/admin.task.routes.ts
+- `adminTaskRouter.use(authenticate, requireAdmin)` -> applies BOTH middlewares to all routes of this router, in this order:
+    1. authenticate -> verifies the token and sets req.user (401 if not logged in)
+    2. requireAdmin -> checks `req.user.role === 'ADMIN'` (403 if not admin)
+    - Order matters - requireAdmin needs req.user, which is set only by authenticate
+    - 401 vs 403: 401 = "who are you? (not logged in)", 403 = "I know who you are, but you are not allowed"
+- get method with "/" path - final endpoint becomes /api/admin/tasks (prefix is added in index.ts)
+- Get search & status from `req.query` (query string), not from req.body
+    ```
+    import { Request, Response, NextFunction, Router } from "express";
+    import { authenticate } from "../middlewares/auth.middleware";
+    import { requireAdmin } from "../middlewares/admin.middleware";
+    import { getAdminTasks } from "../services/admin.task.service";
+    import { AppError } from "../errors/AppError";
+
+    export const adminTaskRouter = Router();
+
+    adminTaskRouter.use(authenticate, requireAdmin)
+
+    adminTaskRouter.get('/', async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const { search, status } = req.query
+
+            // req.query values can be arrays/objects (e.g. ?status=OPEN&status=RESOLVED), so allow only plain strings
+            if ((search !== undefined && typeof search !== "string") ||
+                (status !== undefined && typeof status !== "string")) {
+                throw new AppError(400, "search and status must be single string values")
+            }
+
+            const data = await getAdminTasks({ search, status })
+
+            res.status(200).json({
+                success: true,
+                data
+            })
+
+        } catch (error) {
+            next(error)
+        }
+    })
+    ```
+
+#### 5.1 Why check the type of req.query values? (lines 16-19)
+- We expect `?status=OPEN` → status = "OPEN" (a string). But the client controls the URL and can send other shapes:
+    ```
+    URL                                   req.query.status
+    (not sent)                            undefined
+    ?status=OPEN                          "OPEN"                   ← string
+    ?status=OPEN&status=RESOLVED          ["OPEN", "RESOLVED"]     ← ARRAY (same key twice)
+    ```
+- Because of this, TypeScript's type of `req.query.status` is not `string`. It is something like `string | string[] | ParsedQs | ParsedQs[] | undefined`.
+- 2 problems if we don't check:
+    1. Runtime crash - service calls `query.status?.toUpperCase()`. An array has no toUpperCase → `TypeError: toUpperCase is not a function` → errorHandler → 500. But it is the client's mistake, so it should be 400 (same idea as validateTaskId).
+    2. TypeScript error - getAdminTasks expects `search?: string, status?: string`. TypeScript won't allow passing `string | string[] | ...`.
+- How the condition works - for each value, "it is OK if it is not sent OR it is a string":
+    ```
+    (search !== undefined && typeof search !== "string")
+       │                        │
+       │                        └── ...and it is NOT a string (array/object)
+       └── it was sent...
+    ```
+    - If this is true for search OR (`||`) for status → throw AppError 400
+    ```
+    search             status                 result
+    undefined          undefined              OK  (no filters)
+    "login"            undefined              OK
+    "login"            "OPEN"                 OK
+    "login"            ["OPEN","RESOLVED"]    400
+    ```
+- Bonus: after this `if`, TypeScript is smart enough to know (type narrowing) that search & status can only be `string | undefined`. That is why `getAdminTasks({ search, status })` compiles without any `as` cast.
+
+### 6. Provide the admin task route to root route in src/routes/index.ts
+- All admin task routes get "/admin/tasks" prefix → final endpoint becomes /api/admin/tasks
+    ```
+    import { Router } from 'express'
+    import { healthRouter } from './health.route';
+    import { authRouter } from './auth.routes';
+    import { userTaskRouter } from './user.task.routes';
+    import { adminTaskRouter } from './admin.task.routes';
+
+    export const apiRouter = Router()
+
+    apiRouter.use(healthRouter);
+    apiRouter.use("/auth", authRouter)
+    apiRouter.use("/tasks", userTaskRouter)
+    apiRouter.use("/admin/tasks", adminTaskRouter)
+    ```
+- Test: GET /api/admin/tasks?search=login&status=open with header (no body needed)
+    ```
+    Authorization: Bearer <accessToken of an ADMIN user, received from /login>
+    ```
+- Response
+    ```
+    {
+        "success": true,
+        "data": {
+            "tasks": [
+                {
+                    "id": "<uuid>",
+                    "title": "Fix login bug",
+                    "status": "OPEN",
+                    "user_id": "<id of the user who created it>",
+                    "created_at": "...",
+                    "updated_at": "..."
+                }
+            ]
+        }
+    }
+    ```
+- Response - when nothing matches (200 with empty array, not 404 - an empty list is a valid result)
+    ```
+    {
+        "success": true,
+        "data": {
+            "tasks": []
+        }
+    }
+    ```
+- Response - when status is invalid, e.g. ?status=done (400)
+    ```
+    {
+        "success": false,
+        "message": "Status must be one of Open, In Progress or Resolved"
+    }
+    ```
+- Response - when same key is sent twice, e.g. ?status=OPEN&status=RESOLVED (400)
+    ```
+    {
+        "success": false,
+        "message": "search and status must be single string values"
+    }
+    ```
+- Response - when logged-in user is not an admin (403)
+    ```
+    {
+        "success": false,
+        "message": "Admin access required. You do not have admin access it seems"
+    }
+    ```
+- Response - when token is missing (401)
+    ```
+    {
+        "success": false,
+        "message": "Access Token is required"
+    }
+    ```
