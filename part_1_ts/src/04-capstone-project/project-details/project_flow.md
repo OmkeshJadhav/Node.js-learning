@@ -1286,9 +1286,6 @@
         ```
 
 
-2. Admin Middleware
-
-
 ## CRUD
 - Why CRUD? CRUD = Create, Read, Update, Delete. These are the 4 basic operations on any resource. Here the resource is a support task (support_tasks table) and each task belongs to a logged-in user.
 - All task routes are protected - only a logged-in user can work with tasks. The user id is taken from the access token (req.user), never from the request body - so a user can't create tasks for someone else.
@@ -2461,12 +2458,60 @@
 - Pass the cleaned values `{ search, status }` (AdminTaskListFilters) to findAllTasks
 - Return `{ tasks }` -> matches AdminTaskListResponse. The route sends this object as `data`, so response becomes `data: { tasks: [...] }` (same shape as GET /api/tasks)
 
-### 5. Create admin task route in src/routes/admin.task.routes.ts
+### 5. Create requireAdmin middleware in src/middlewares/admin.middleware.ts
+- Why admin middleware? authenticate only answers "is this user logged in?". Admin routes need one more question: "is this logged-in user an ADMIN?". Instead of writing this check inside every admin route, we write it once as a middleware and plug it into the admin router.
+- Where does role come from? At login, signAccessToken puts `{ userId, email, role }` inside the JWT (see User Login Flow). authenticate verifies the token and puts this payload in `req.user`. So requireAdmin just reads `req.user.role` - no DB query needed.
+- Flow
+    ```
+    Request (already passed authenticate → req.user is set)
+                │
+                ↓
+        requireAdmin middleware
+                │
+                ├── req.user.role is not 'ADMIN' ──→ next(AppError 403) ──→ errorHandler
+                │
+                ↓
+            next() ──→ Route handler
+    ```
+- Create requireAdmin function
+    - Check `req.user?.role !== "ADMIN"` - if not admin, pass AppError 403 to next() and return
+    - Else call next() to move to the route handler
+    ```
+    import { Request, Response, NextFunction } from "express";
+    import { AppError } from "../errors/AppError";
+
+    export function requireAdmin(
+        req: Request,
+        _res: Response,
+        next: NextFunction,
+    ): void {
+        if (req.user?.role !== "ADMIN") {
+            next(
+                new AppError(
+                    403,
+                    "Admin access required. You do not have admin access it seems",
+                ),
+            );
+            return;
+        }
+
+        next();
+    }
+    ```
+- `req.user?.role` -> `?.` because req.user is optional in its type (see express.d.ts). If somehow requireAdmin runs without authenticate, req.user is undefined → `undefined !== "ADMIN"` → 403. So it fails safely (blocks the request) instead of crashing.
+- `return` after `next(error)` -> very important. Without return, the code continues and calls `next()` again → the request goes to the route handler even for non-admin users.
+- `_res` -> response is not used here. `_` prefix tells TypeScript (noUnusedParameters) that it is unused on purpose. Same as in errorHandler.
+- Why 403 and not 401?
+    - 401 Unauthorized -> "who are you?" - token missing/invalid (authenticate handles this)
+    - 403 Forbidden -> "I know who you are, but you are not allowed" - logged in, but not admin
+- Is it safe to trust role from the token? Yes - the token is signed with JWT_SECRET. If someone changes `"role": "USER"` to `"ADMIN"` inside the token, the signature no longer matches and verifyAccessToken throws 401.
+    - Side effect: if you change a user's role in DB, the old token still has the old role until it expires. User must login again to get a token with the new role.
+
+### 6. Create admin task route in src/routes/admin.task.routes.ts
 - `adminTaskRouter.use(authenticate, requireAdmin)` -> applies BOTH middlewares to all routes of this router, in this order:
     1. authenticate -> verifies the token and sets req.user (401 if not logged in)
-    2. requireAdmin -> checks `req.user.role === 'ADMIN'` (403 if not admin)
-    - Order matters - requireAdmin needs req.user, which is set only by authenticate
-    - 401 vs 403: 401 = "who are you? (not logged in)", 403 = "I know who you are, but you are not allowed"
+    2. requireAdmin -> checks `req.user.role === 'ADMIN'` (403 if not admin) - see step 5
+    - Order matters - requireAdmin needs req.user, which is set only by authenticate. If you write `use(requireAdmin, authenticate)`, req.user is always undefined in requireAdmin → every request gets 403, even admins.
 - get method with "/" path - final endpoint becomes /api/admin/tasks (prefix is added in index.ts)
 - Get search & status from `req.query` (query string), not from req.body
     ```
@@ -2503,7 +2548,7 @@
     })
     ```
 
-#### 5.1 Why check the type of req.query values? (lines 16-19)
+#### 6.1 Why check the type of req.query values? (lines 16-19)
 - We expect `?status=OPEN` → status = "OPEN" (a string). But the client controls the URL and can send other shapes:
     ```
     URL                                   req.query.status
@@ -2532,7 +2577,7 @@
     ```
 - Bonus: after this `if`, TypeScript is smart enough to know (type narrowing) that search & status can only be `string | undefined`. That is why `getAdminTasks({ search, status })` compiles without any `as` cast.
 
-### 6. Provide the admin task route to root route in src/routes/index.ts
+### 7. Provide the admin task route to root route in src/routes/index.ts
 - All admin task routes get "/admin/tasks" prefix → final endpoint becomes /api/admin/tasks
     ```
     import { Router } from 'express'
