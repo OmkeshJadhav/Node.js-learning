@@ -1,6 +1,6 @@
 import { AppError } from "../errors/AppError"
 import { createTask, deleteTask, fetchTaskByTaskId, fetchTasksByUserId, updateTaskByPatch } from "../repositories/user.task.repository";
-import { Task } from "../types/task";
+import { Task, TASK_STATUSES, TaskStatus } from "../types/task";
 
 const validateTitle = (title: unknown): string => {
     if (typeof title !== 'string' || !title.trim()) {
@@ -24,10 +24,8 @@ const validateTaskId = (taskId: string): void => {
     }
 }
 
-const TASK_STATUSES = ['OPEN', 'IN PROGRESS', 'RESOLVED']
-
 const validateStatus = (status: unknown): string => {
-    if (typeof status !== 'string' || !TASK_STATUSES.includes(status)) {
+    if (typeof status !== 'string' || !TASK_STATUSES.includes(status as TaskStatus)) {
         throw new AppError(400, 'Invalid task status.')
     }
 

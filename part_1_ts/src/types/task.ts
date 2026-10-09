@@ -8,3 +8,6 @@ export type Task = {
 }
 
 export type TaskRow = Task;
+
+export const TASK_STATUSES = ["OPEN", "IN PROGRESS", "RESOLVED"] as const;
+export type TaskStatus = (typeof TASK_STATUSES)[number]
