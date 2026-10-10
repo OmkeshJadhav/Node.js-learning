@@ -2200,9 +2200,8 @@
         200 { success, data: { tasks } }
     ```
 
-### 1. Move TASK_STATUSES to src/types/task.ts (shared by user & admin service)
-- Earlier TASK_STATUSES was inside user.task.service.ts. Now admin.task.service.ts also needs it, so we move it to types/task.ts - one place for the list, both services import it.
-    ```
+### 1. TASK_STATUSES in src/types/task.ts (shared by user & admin service)
+-   ```
     export const TASK_STATUSES = ["OPEN", "IN PROGRESS", "RESOLVED"] as const;
     export type TaskStatus = (typeof TASK_STATUSES)[number]
     ```
