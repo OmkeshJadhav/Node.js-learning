@@ -1599,7 +1599,7 @@
         getUserTaskById(req.user.userId, req.params.taskId) (user.task.service.ts)
                 │
                 ↓
-        validateTaskId(taskId)
+        validateTaskId(taskId) (task.validator.ts)
                 │
                 ├── not a valid UUID ──→ AppError 400
                 │
@@ -1632,27 +1632,33 @@
     }
     ```
 
-#### 2. Create getUserTaskById in src/services/user.task.service.ts (Business logic)
-- Create validateTaskId helper function
-    - Why? id column of support_tasks is UUID type. If client sends something like "abc" in the URL, Postgres throws error `invalid input syntax for type uuid` → errorHandler treats it as unknown error → 500 Internal Server Error. But it is the client's mistake, so it should be 400 (Bad Request).
-    - So we check taskId format using a UUID regex before hitting the DB - if it doesn't match, throw AppError 400
-    - UUID format: 8-4-4-4-12 hex characters, e.g. `3f2a1b4c-9d8e-4f7a-b6c5-1a2b3c4d5e6f`. `i` flag -> case-insensitive (A-F or a-f both allowed)
+#### 2. Create validateTaskId in src/validators/task.validator.ts
+- Why? id column of support_tasks is UUID type. If client sends something like "abc" in the URL, Postgres throws error `invalid input syntax for type uuid` → errorHandler treats it as unknown error → 500 Internal Server Error. But it is the client's mistake, so it should be 400 (Bad Request).
+- So we check taskId format using a UUID regex before hitting the DB - if it doesn't match, throw AppError 400
+- UUID format: 8-4-4-4-12 hex characters, e.g. `3f2a1b4c-9d8e-4f7a-b6c5-1a2b3c4d5e6f`. `i` flag -> case-insensitive (A-F or a-f both allowed)
+- Why a separate validators file and not inside user.task.service.ts? Every route with `:taskId` in the URL needs this check - GET by id, PATCH, DELETE, and later the admin routes too. Keeping it in its own file means any service can import it, instead of one service importing from another or copy-pasting the same code (2 copies = 2 places to fix if the rule changes).
+- validateTaskId is exported (services use it), UUID_REGEX is NOT exported (only validateTaskId needs it)
     ```
+    import { AppError } from "../errors/AppError";
+
     const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-    const validateTaskId = (taskId: string): void => {
-        if(!UUID_REGEX.test(taskId)){
+    export const validateTaskId = (taskId: string): void => {
+        if (!UUID_REGEX.test(taskId)) {
             throw new AppError(400, 'Invalid task id.')
         }
     }
     ```
+
+#### 3. Create getUserTaskById in src/services/user.task.service.ts (Business logic)
 - Create getUserTaskById function
-    - Validate taskId using validateTaskId - else 400
+    - Validate taskId using validateTaskId (import from validators) - else 400
     - Call fetchTaskByTaskId from repository
     - If task is null (not found or belongs to another user) - throw AppError 404 (Not Found)
     - Return the task
     ```
     import { createTask, fetchTaskByTaskId, fetchTasksByUserId } from "../repositories/user.task.repository";
+    import { validateTaskId } from "../validators/task.validator";
 
     export const getUserTaskById = async (userId: string, taskId: string): Promise<Task | null> => {
         validateTaskId(taskId)
@@ -1668,7 +1674,7 @@
     ```
     - Note: Order of arguments - service takes (userId, taskId) but repository takes (taskId, userId). Pass them in the correct order.
 
-#### 3. Create get by id route in src/routes/user.task.routes.ts
+#### 4. Create get by id route in src/routes/user.task.routes.ts
 - get method with "/:taskId" path - final endpoint becomes /api/tasks/:taskId
     - `:taskId` is a route parameter - Express reads the value from the URL and puts it in `req.params.taskId`
     - e.g. GET /api/tasks/abc-123 → req.params.taskId = "abc-123"
@@ -1758,7 +1764,7 @@
         updateUserTask(req.params.taskId, req.user.userId, title, status) (user.task.service.ts)
                 │
                 ↓
-        validateTaskId(taskId)
+        validateTaskId(taskId) (task.validator.ts)
                 │
                 ├── not a valid UUID ──→ AppError 400
                 │
@@ -2035,7 +2041,7 @@
         deleteUserTask(req.params.taskId, req.user.userId) (user.task.service.ts)
                 │
                 ↓
-        validateTaskId(taskId)
+        validateTaskId(taskId) (task.validator.ts)
                 │
                 ├── not a valid UUID ──→ AppError 400
                 │
@@ -2635,6 +2641,231 @@
     {
         "success": false,
         "message": "search and status must be single string values"
+    }
+    ```
+- Response - when logged-in user is not an admin (403)
+    ```
+    {
+        "success": false,
+        "message": "Admin access required. You do not have admin access it seems"
+    }
+    ```
+- Response - when token is missing (401)
+    ```
+    {
+        "success": false,
+        "message": "Access Token is required"
+    }
+    ```
+
+
+## Admin PATCH API for Status Update
+- Why? A normal user can change the status of only their OWN task (PATCH /api/tasks/:taskId). An ADMIN (support team) should be able to change the status of ANY task, e.g. move a user's task from OPEN → IN PROGRESS → RESOLVED.
+- Difference from user PATCH
+    ```
+                        User PATCH (/api/tasks/:taskId)        Admin PATCH (/api/admin/tasks/:taskId/status)
+    Who                 logged-in user                         logged-in ADMIN
+    Which tasks         only own task (id AND user_id)         any task (only id)
+    Fields              title and/or status                    only status
+    status input        must be exact "OPEN"...                "open", " Open " also allowed (trim + uppercase)
+    ```
+- Why `/:taskId/status` and not just `/:taskId`? The path itself says WHAT is being changed. Admin can change only the status, so a separate, specific endpoint is clearer than a generic "update task" endpoint. Later, other admin actions can get their own paths (e.g. `/:taskId/assign`).
+- Flow
+    ```
+    PATCH /api/admin/tasks/:taskId/status { status }
+    (Authorization: Bearer <accessToken of ADMIN>)
+                │
+                ↓
+        authenticate middleware (auth.middleware.ts)
+                │
+                ├── Missing/Invalid token ──→ AppError 401
+                │
+                ↓
+        requireAdmin middleware (admin.middleware.ts)
+                │
+                ├── role is not ADMIN ──→ AppError 403
+                │
+                ↓
+        PATCH "/:taskId/status" route (admin.task.routes.ts)
+                │
+                ↓
+        updateAdminTaskStatus(req.params.taskId, req.body.status) (admin.task.service.ts)
+                │
+                ↓
+        validateTaskId(taskId) (task.validator.ts)
+                │
+                ├── not a valid UUID ──→ AppError 400
+                │
+                ↓
+        normalize status (string? → trim → uppercase)
+                │
+                ├── not sent / not a string / not one of OPEN / IN PROGRESS / RESOLVED ──→ AppError 400
+                │
+                ↓
+        updateTaskStatus(taskId, normalizedStatus) (admin.task.repository.ts)
+                │
+                ├── task not found ──→ AppError 404
+                │
+                ↓
+        200 { success, data: { task } }
+    ```
+
+### 1. Create updateTaskStatus in src/repositories/admin.task.repository.ts (DB related logic)
+- Create updateTaskStatus function. The function will return the updated task (if found) or null (if not found)
+- Write query to update the status of one task - `$1`, `$2` are parameterized values & `[status, taskId]` provides the values (prevents SQL injection)
+    - Order matters - `$1` is the FIRST item of the array, `$2` is the SECOND. Here `$1` = status, `$2` = taskId. If you write `[taskId, status]`, Postgres tries to set status = <uuid> and search id = 'OPEN'.
+- `WHERE id = $2` -> only id, NO `user_id` check. This is the main difference from user's updateTaskByPatch. Admin can update any user's task. It is safe because only admins reach this code (requireAdmin runs before the route).
+- `updated_at = NOW()` -> set the update time (same as user PATCH)
+- `RETURNING ...` -> return the updated row, so we can send it back in the response (no extra SELECT needed)
+- `result.rows[0] ?? null` -> if no row matched the id, rows is `[]` and `rows[0]` is undefined. `?? null` converts it to null, so the service can check `if(!task)` → 404
+- No COALESCE needed here (unlike user PATCH) - status is the only field and it is always sent (service makes sure of it)
+    ```
+    export const updateTaskStatus = async (taskId: string, status: string): Promise<Task | null> => {
+        const result = await pool.query<TaskRow>(
+            `
+            UPDATE support_tasks
+            SET status = $1,
+                updated_at = NOW()
+            WHERE id = $2
+            RETURNING id, title, status, user_id, created_at, updated_at
+            `,
+            [status, taskId]
+        )
+
+        return result.rows[0] ?? null;
+    }
+    ```
+
+### 2. Create updateAdminTaskStatus in src/services/admin.task.service.ts (Business logic)
+- Validate taskId, normalize status, validate it, call updateTaskStatus from repository, and throw 404 if task is not found
+    ```
+    import { AppError } from "../errors/AppError";
+    import { findAllTasks, updateTaskStatus } from "../repositories/admin.task.repository";
+    import { AdminTaskListQuery, AdminTaskListResponse } from "../types/admin";
+    import { Task, TASK_STATUSES, TaskStatus } from "../types/task";
+    import { validateTaskId } from "../validators/task.validator";
+
+    export const updateAdminTaskStatus = async (taskId: string, status: unknown): Promise<Task> => {
+        validateTaskId(taskId)
+
+        const normalizedStatus = typeof status === 'string' ? status.trim().toUpperCase() : undefined
+
+        if (!normalizedStatus || !TASK_STATUSES.includes(normalizedStatus as TaskStatus)) {
+            throw new AppError(400, `Status must be one of ${TASK_STATUSES.join(', ')}`)
+        }
+
+        const task = await updateTaskStatus(taskId, normalizedStatus as TaskStatus)
+
+        if(!task){
+            throw new AppError(404, 'Task Not Found')
+        }
+
+        return task;
+    }
+    ```
+
+#### 2.1 Validate taskId (line 24)
+- Why? Admin PATCH also gets taskId from the URL. Without this check, PATCH /api/admin/tasks/abc/status reaches Postgres → "invalid input syntax for type uuid" → errorHandler → 500. Client's mistake should be 400.
+- Re-use the same validateTaskId created for the user routes (see GET individual Task step 2) - just import it from validators. This is why it was kept in its own file and not inside user.task.service.ts.
+- Call it FIRST - if taskId is not a valid UUID, throw 400 before doing anything else (no need to check status or hit the DB for a request that can never succeed)
+
+#### 2.2 Normalize status (line 26)
+- `status: unknown` -> it comes directly from req.body, so it can be anything (string, number, null, object, or not sent at all). Same idea as validateStatus in user.task.service.ts.
+- `typeof status === 'string' ? ... : undefined` -> only if it is a string, clean it. Anything else (number, null, array, not sent) becomes undefined → 400 in next step.
+    - Why check the type first? `(123).trim()` → `TypeError: trim is not a function` → 500. It is the client's mistake, so it should be 400.
+    - Why not `status?.trim()` (like getAdminTasks)? `?.` only protects against undefined/null. It does NOT protect against a number or an object.
+- `.trim().toUpperCase()` -> same as getAdminTasks - "  in progress " → "IN PROGRESS"
+- What we get for different inputs
+    ```
+    req.body                        normalizedStatus
+    { "status": "resolved" }        "RESOLVED"
+    { "status": " In Progress " }   "IN PROGRESS"
+    { "status": "" }                ""             → 400 (next step)
+    { "status": "done" }            "DONE"         → 400 (next step)
+    { "status": 1 }                 undefined      → 400 (next step)
+    {}                              undefined      → 400 (next step)
+    ```
+
+#### 2.3 Validate status (lines 28-30)
+- `!normalizedStatus` -> catches undefined (not a string / not sent) AND `""` (empty string is falsy). Unlike GET (where status is an optional filter), here status is REQUIRED - there is nothing else to update.
+- `!TASK_STATUSES.includes(normalizedStatus as TaskStatus)` -> must be one of the allowed values (see Admin + Search/Filters step 1 for why `as TaskStatus`)
+- Why validate here, if the DB has a CHECK constraint? Without this, "DONE" reaches Postgres → CHECK constraint error → errorHandler treats it as unknown error → 500. Client's mistake should be 400.
+- `` `Status must be one of ${TASK_STATUSES.join(', ')}` `` -> message is built from the array → "Status must be one of OPEN, IN PROGRESS, RESOLVED". If a new status is added to TASK_STATUSES, the message updates automatically (no hardcoded list).
+
+#### 2.4 Call repository, check 404 and return
+- `normalizedStatus as TaskStatus` -> after the `if`, we know it is a valid status, but TypeScript can't narrow a `string` through `includes()`, so we tell it with `as`
+- `await` is important here. Without `await`, task is a Promise (not the row). A Promise is always truthy, so `if(!task)` never runs and 404 is never thrown.
+- If task is null (no task with this id) - throw AppError 404 (Not Found)
+- Return type is `Promise<Task>` (not `Task | null`) -> if task were null, we have already thrown 404. So when this function returns, task is always a Task.
+
+### 3. Create patch route in src/routes/admin.task.routes.ts
+- patch method with "/:taskId/status" path - final endpoint becomes /api/admin/tasks/:taskId/status
+- authenticate & requireAdmin already run for this route because of `adminTaskRouter.use(authenticate, requireAdmin)` (added in Admin + Search/Filters step 6)
+- Get taskId from req.params and status from req.body
+    - No userId needed (unlike user PATCH) - admin is not limited to their own tasks
+- Call updateAdminTaskStatus and send response with status 200 (OK) with the updated task
+- Catch the error (e.g. AppError 400/404) and pass it to errorHandler using next(error)
+    ```
+    import { getAdminTasks, updateAdminTaskStatus } from "../services/admin.task.service";
+
+    adminTaskRouter.patch('/:taskId/status', async (req, res, next) => {
+        try {
+            const task = await updateAdminTaskStatus(req.params.taskId, req.body.status)
+
+            res.status(200).json({
+                success: true,
+                data: { task }
+            })
+        } catch (error) {
+            next(error)
+        }
+    })
+    ```
+- No change needed in src/routes/index.ts - adminTaskRouter is already plugged with "/admin/tasks" prefix
+- Test: PATCH /api/admin/tasks/<taskId>/status with header and body
+    ```
+    Authorization: Bearer <accessToken of an ADMIN user, received from /login>
+    ```
+    ```
+    {
+        "status": "resolved"
+    }
+    ```
+- Response - status is saved in uppercase
+    ```
+    {
+        "success": true,
+        "data": {
+            "task": {
+                "id": "<taskId>",
+                "title": "Fix login bug",
+                "status": "RESOLVED",
+                "user_id": "<id of the user who created it>",
+                "created_at": "...",
+                "updated_at": "<new time>"
+            }
+        }
+    }
+    ```
+- Response - when status is missing, empty, not a string or not allowed, e.g. "status": "done" (400)
+    ```
+    {
+        "success": false,
+        "message": "Status must be one of OPEN, IN PROGRESS, RESOLVED"
+    }
+    ```
+- Response - when taskId is not a valid UUID, e.g. PATCH /api/admin/tasks/abc/status (400)
+    ```
+    {
+        "success": false,
+        "message": "Invalid task id."
+    }
+    ```
+- Response - when no task has this id (404)
+    ```
+    {
+        "success": false,
+        "message": "Task Not Found"
     }
     ```
 - Response - when logged-in user is not an admin (403)
