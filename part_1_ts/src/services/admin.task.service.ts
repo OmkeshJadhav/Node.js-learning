@@ -2,6 +2,7 @@ import { AppError } from "../errors/AppError";
 import { findAllTasks, updateTaskStatus } from "../repositories/admin.task.repository";
 import { AdminTaskListQuery, AdminTaskListResponse } from "../types/admin";
 import { Task, TASK_STATUSES, TaskStatus } from "../types/task";
+import { validateTaskId } from "../validators/task.validator";
 
 
 export const getAdminTasks = async (query: AdminTaskListQuery): Promise<AdminTaskListResponse> => {
@@ -20,6 +21,8 @@ export const getAdminTasks = async (query: AdminTaskListQuery): Promise<AdminTas
 
 
 export const updateAdminTaskStatus = async (taskId: string, status: unknown): Promise<Task> => {
+    validateTaskId(taskId)
+
     const normalizedStatus = typeof status === 'string' ? status.trim().toUpperCase() : undefined
 
     if (!normalizedStatus || !TASK_STATUSES.includes(normalizedStatus as TaskStatus)) {

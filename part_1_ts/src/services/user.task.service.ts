@@ -1,6 +1,7 @@
 import { AppError } from "../errors/AppError"
 import { createTask, deleteTask, fetchTaskByTaskId, fetchTasksByUserId, updateTaskByPatch } from "../repositories/user.task.repository";
 import { Task, TASK_STATUSES, TaskStatus } from "../types/task";
+import { validateTaskId } from "../validators/task.validator";
 
 const validateTitle = (title: unknown): string => {
     if (typeof title !== 'string' || !title.trim()) {
@@ -14,14 +15,6 @@ const validateTitle = (title: unknown): string => {
     }
 
     return trimmedTitle
-}
-
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-const validateTaskId = (taskId: string): void => {
-    if (!UUID_REGEX.test(taskId)) {
-        throw new AppError(400, 'Invalid task id.')
-    }
 }
 
 const validateStatus = (status: unknown): string => {
