@@ -9,14 +9,14 @@ export const findAllTasks = async (filters: AdminTaskListFilters): Promise<Task[
 
     let paramIndex = 1;
 
-    if(filters.search){
+    if (filters.search) {
         conditions.push(`title ILIKE $${paramIndex}`)
         // Escape \, % and _ so they are matched literally instead of acting as ILIKE wildcards
         const escapedSearch = filters.search.replace(/[\\%_]/g, "\\$&")
         values.push(`%${escapedSearch}%`)
         paramIndex++
     }
-    if(filters.status){
+    if (filters.status) {
         conditions.push(`status = $${paramIndex}`)
         values.push(filters.status)
         paramIndex++
@@ -49,4 +49,16 @@ export const updateTaskStatus = async (taskId: string, status: string): Promise<
     )
 
     return result.rows[0] ?? null;
+}
+
+export const deleteTaskByAdmin = async (taskId: string): Promise<boolean> => {
+    const result = await pool.query(
+        `
+        DELETE FROM support_tasks
+        WHERE id = $1
+        `,
+        [taskId]
+    )
+
+    return (result.rowCount ?? 0) > 0
 }
