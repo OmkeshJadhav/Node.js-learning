@@ -2882,3 +2882,160 @@
         "message": "Access Token is required"
     }
     ```
+
+
+## Admin Delete Task
+- Why? A normal user can delete only their OWN task (DELETE /api/tasks/:taskId). An ADMIN (support team) should be able to delete ANY task, e.g. remove spam, duplicate or invalid tasks created by users.
+- Difference from user DELETE
+    ```
+                        User DELETE (/api/tasks/:taskId)       Admin DELETE (/api/admin/tasks/:taskId)
+    Who                 logged-in user                         logged-in ADMIN
+    Which tasks         only own task (id AND user_id)         any task (only id)
+    404 when            not found / belongs to another user    not found
+    ```
+- Why `/:taskId` and not `/:taskId/delete`? With DELETE, the HTTP method itself says WHAT is being done (delete the whole task). In PATCH, we added `/status` because only one field of the task is changed.
+- Flow
+    ```
+    DELETE /api/admin/tasks/:taskId
+    (Authorization: Bearer <accessToken of ADMIN>)
+                │
+                ↓
+        authenticate middleware (auth.middleware.ts)
+                │
+                ├── Missing/Invalid token ──→ AppError 401
+                │
+                ↓
+        requireAdmin middleware (admin.middleware.ts)
+                │
+                ├── role is not ADMIN ──→ AppError 403
+                │
+                ↓
+        DELETE "/:taskId" route (admin.task.routes.ts)
+                │
+                ↓
+        deleteTaskWithAdmin(req.params.taskId) (admin.task.service.ts)
+                │
+                ↓
+        validateTaskId(taskId) (task.validator.ts)
+                │
+                ├── not a valid UUID ──→ AppError 400
+                │
+                ↓
+        deleteTaskByAdmin(taskId) (admin.task.repository.ts)
+                │
+                ├── no row deleted (task not found) ──→ AppError 404
+                │
+                ↓
+        200 { success, message }
+    ```
+
+### 1. Create deleteTaskByAdmin in src/repositories/admin.task.repository.ts (DB related logic)
+- Create deleteTaskByAdmin function. The function will return `true` (if task was deleted) or `false` (if no task was deleted)
+- Write query to delete one task - `$1` is a parameterized value & `[taskId]` provides the value (prevents SQL injection)
+- `WHERE id = $1` -> only id, NO `user_id` check. This is the main difference from user's deleteTask. Admin can delete any user's task. It is safe because only admins reach this code (requireAdmin runs before the route).
+- No `RETURNING` here - we don't need the deleted row back, we only need to know whether something was deleted (same as user's deleteTask)
+- `result.rowCount` -> number of rows deleted
+    - task found & deleted → rowCount = 1 → return true
+    - task not found → rowCount = 0 → return false
+    - Why `?? 0`? In pg types, rowCount is `number | null`, so we convert null to 0 before comparing
+    ```
+    export const deleteTaskByAdmin = async (taskId: string): Promise<boolean> => {
+        const result = await pool.query(
+            `
+            DELETE FROM support_tasks
+            WHERE id = $1
+            `,
+            [taskId]
+        )
+
+        return (result.rowCount ?? 0) > 0
+    }
+    ```
+- Note: `pool.query` has no `<TaskRow>` generic here, because DELETE without RETURNING returns no rows
+
+### 2. Create deleteTaskWithAdmin in src/services/admin.task.service.ts (Business logic)
+- Validate taskId using validateTaskId (same one used in updateAdminTaskStatus & user routes) - else 400
+    - Without this, DELETE /api/admin/tasks/abc reaches Postgres → "invalid input syntax for type uuid" → errorHandler → 500. Client's mistake should be 400.
+- Call deleteTaskByAdmin from repository
+    - `await` is important here. Without `await`, deletedTask is a Promise (not a boolean). A Promise is always truthy, so `if(!deletedTask)` never runs and 404 is never thrown.
+- If deletedTask is false (no task with this id) - throw AppError 404 (Not Found)
+- Return type is `Promise<void>` - nothing to return. If no error is thrown, it means the task was deleted. (same as deleteUserTask)
+    ```
+    import { deleteTaskByAdmin, findAllTasks, updateTaskStatus } from "../repositories/admin.task.repository";
+
+    export const deleteTaskWithAdmin = async (taskId: string): Promise<void> => {
+        validateTaskId(taskId)
+
+        const deletedTask = await deleteTaskByAdmin(taskId);
+
+        if (!deletedTask) {
+            throw new AppError(404, "Task not found.")
+        }
+    }
+    ```
+
+### 3. Create delete route in src/routes/admin.task.routes.ts
+- delete method with "/:taskId" path - final endpoint becomes /api/admin/tasks/:taskId
+- authenticate & requireAdmin already run for this route because of `adminTaskRouter.use(authenticate, requireAdmin)` (added in Admin + Search/Filters step 6)
+- Get taskId from req.params
+    - No userId needed (unlike user DELETE) - admin is not limited to their own tasks
+- Call deleteTaskWithAdmin and send response with status 200 (OK) with a success message
+    - There is no task to send back (it is deleted), so we send only a message (same as user DELETE)
+- Catch the error (e.g. AppError 400/404) and pass it to errorHandler using next(error)
+    ```
+    import { deleteTaskWithAdmin, getAdminTasks, updateAdminTaskStatus } from "../services/admin.task.service";
+
+    adminTaskRouter.delete('/:taskId', async (req, res, next) => {
+        try {
+            await deleteTaskWithAdmin(req.params.taskId)
+
+            res.status(200).json({
+                success: true,
+                message: `Task ${req.params.taskId} deleted successfully by Admin.`
+            })
+        } catch (error) {
+            next(error)
+        }
+    })
+    ```
+    - Note: deleteTaskWithAdmin returns nothing, so there is no need to store its result in a variable - just `await` it.
+- No change needed in src/routes/index.ts - adminTaskRouter is already plugged with "/admin/tasks" prefix
+- Test: DELETE /api/admin/tasks/<taskId> with header (no body needed)
+    ```
+    Authorization: Bearer <accessToken of an ADMIN user, received from /login>
+    ```
+- Response
+    ```
+    {
+        "success": true,
+        "message": "Task <taskId> deleted successfully by Admin."
+    }
+    ```
+- Response - when no task has this id, or it is already deleted (404)
+    ```
+    {
+        "success": false,
+        "message": "Task not found."
+    }
+    ```
+- Response - when taskId is not a valid UUID, e.g. DELETE /api/admin/tasks/abc (400)
+    ```
+    {
+        "success": false,
+        "message": "Invalid task id."
+    }
+    ```
+- Response - when logged-in user is not an admin (403)
+    ```
+    {
+        "success": false,
+        "message": "Admin access required. You do not have admin access it seems"
+    }
+    ```
+- Response - when token is missing (401)
+    ```
+    {
+        "success": false,
+        "message": "Access Token is required"
+    }
+    ```
