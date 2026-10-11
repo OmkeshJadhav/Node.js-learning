@@ -35,3 +35,18 @@ export const findAllTasks = async (filters: AdminTaskListFilters): Promise<Task[
     )
     return result.rows;
 }
+
+export const updateTaskStatus = async (taskId: string, status: string): Promise<Task | null> => {
+    const result = await pool.query<TaskRow>(
+        `
+        UPDATE support_tasks
+        SET status = $1,
+            updated_at = NOW()
+        WHERE id = $2
+        RETURNING id, title, status, user_id, created_at, updated_at
+        `,
+        [status, taskId]
+    )
+
+    return result.rows[0] ?? null;
+}
