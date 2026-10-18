@@ -19,5 +19,8 @@ export const env = {
     loggerLevel: process.env.LOGGER_LEVEL ?? 'info',
     databaseUrl: checkRequiredEnvVariables('DATABASE_URL'),
     jwtAccessSecret: checkRequiredEnvVariables('JWT_SECRET'),
-    jwtAccessExpiresIn: checkRequiredEnvVariables('JWT_ACCESS_EXPIRES_IN')
+    jwtAccessExpiresIn: checkRequiredEnvVariables('JWT_ACCESS_EXPIRES_IN'),
+    cloudinaryCloudName: checkRequiredEnvVariables('CLOUDINARY_CLOUD_NAME'),
+    cloudinaryApiKey: checkRequiredEnvVariables('CLOUDINARY_API_KEY'),
+    cloudinaryApiSecret: checkRequiredEnvVariables('CLOUDINARY_API_SECRET')
 } as const;
