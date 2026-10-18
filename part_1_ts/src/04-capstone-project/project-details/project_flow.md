@@ -6360,11 +6360,11 @@ Uploading files to local server folders in production	Use persistent object stor
 | 2 | `src/config/cloudinary.ts` | Config | Sets up the Cloudinary SDK once with those keys |
 | 3 | `migrations/005_add_avatar_to_users.sql` | DB schema | Adds `avatar_url` & `avatar_public_id` columns to `users` table (runs once) |
 | 4 | `src/types/user.ts` | Types | `DBUserAvatarRow` - shape of the avatar data we read from DB |
-| 5 | `src/middlewares/upload.middleware.ts` | Middleware | multer - reads the file from the request, checks type & size |
+| 5 | `src/middlewares/fileUpload.middleware.ts` | Middleware | multer - reads the file from the request, checks type & size |
 | 6 | `src/services/cloudinary.service.ts` | External service | Talks ONLY to Cloudinary: `uploadImage`, `deleteImage` |
-| 7 | `src/repositories/file.upload.repository.ts` | Repository | Talks ONLY to Postgres: `findUserAvatar`, `updateUserAvatar` |
-| 8 | `src/services/file.upload.service.ts` | Service (business logic) | The "change my avatar" feature - decides the ORDER of steps |
-| 9 | `src/routes/file.upload.routes.ts` | Route | Receives request, checks file exists, sends response |
+| 7 | `src/repositories/file.upload.repository.ts` | Repository | Talks ONLY to Postgres: `findUserAvatar`, `updateUserAvatar`, `clearUserAvatar` |
+| 8 | `src/services/file.upload.service.ts` | Service (business logic) | The "change / delete my avatar" feature - decides the ORDER of steps (`uploadUserAvatar`, `removeUserAvatar`) |
+| 9 | `src/routes/file.upload.routes.ts` | Route | `POST /image` (upload) & `DELETE /image` (delete) - receives request, sends response |
 | 10 | `src/routes/index.ts` | Route | Plugs the router at `/uploads` |
 | 11 | `src/middlewares/errorHandler.ts` | Middleware | Converts multer errors (file too big) into 400 |
 
@@ -6593,6 +6593,26 @@ export type DBUserAvatarRow = {
     }
     ```
 
+- `clearUserAvatar(userId)` → used by DELETE. Sets both columns back to `NULL` for THIS user (the user row stays, only the avatar is removed).
+    ```ts
+    export const clearUserAvatar = async (userId: string): Promise<DBUserAvatarRow | null> => {
+        const result = await pool.query<DBUserAvatarRow>(
+            `
+            UPDATE users
+            SET avatar_url = NULL,
+                avatar_public_id = NULL,
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING id, avatar_url, avatar_public_id
+            `,
+            [userId]
+        )
+
+        return result.rows[0] ?? null
+    }
+    ```
+  - `UPDATE ... SET NULL` not `DELETE FROM users` - `DELETE` would remove the whole user! We only want to empty 2 columns.
+
 
 ### Step 8: Business logic service (`src/services/file.upload.service.ts`)
 
@@ -6661,6 +6681,53 @@ export type DBUserAvatarRow = {
     }
   ```
 
+- `removeUserAvatar(userId)` - delete the avatar. Again, the order is the important part:
+  ```
+  1. findUserAvatar(userId)            → get the public_id of the current avatar
+              │
+              ├── user not found ──→ AppError 404 "User not found"
+              │
+              ├── avatar_public_id is null ──→ AppError 404 "No avatar to delete"
+              ↓
+  2. clearUserAvatar(userId)           → DB: avatar_url & avatar_public_id = NULL
+              │
+              ├── DB fails ──→ error (nothing changed, avatar still fine)
+              ↓
+  3. deleteImage(public_id)            → image removed from Cloudinary
+              │
+              ├── fails ──→ just log it (only an unused image is left in Cloudinary)
+              ↓
+  4. return (route sends 200)
+  ```
+- Why DB first, then Cloudinary? (opposite of upload, but same idea)
+  - If we deleted from Cloudinary FIRST and then the DB update failed → DB still has `avatar_url` pointing to an image that doesn't exist → broken image in the frontend. Bad.
+  - DB first means the worst case is just an unused image left in Cloudinary - user never sees anything broken.
+  - Rule for both upload & delete: **the DB should never point to an image that doesn't exist.**
+
+  ```ts
+    import { clearUserAvatar, findUserAvatar, updateUserAvatar } from "../repositories/file.upload.repository"
+
+    export const removeUserAvatar = async (userId: string): Promise<void> => {
+        const existingUser = await findUserAvatar(userId)
+
+        if (!existingUser) {
+            throw new AppError(404, "User not found")
+        }
+
+        if (!existingUser.avatar_public_id) {
+            throw new AppError(404, "No avatar to delete")
+        }
+
+        // 1. Clear the DB first - so the user never points to an image that no longer exists
+        await clearUserAvatar(userId)
+
+        // 2. Then delete from Cloudinary - failure here only leaves an unused image, so just log it
+        await deleteImage(existingUser.avatar_public_id).catch((err) =>
+            logger.error({ err }, "Failed to delete avatar from Cloudinary")
+        )
+    }
+  ```
+
 ### Step 9: Route (`src/routes/file.upload.routes.ts`)
 
 ```ts
@@ -6688,13 +6755,35 @@ fileUploadRouter.post('/image', upload.single("image"), async (req, res, next) =
 - `!req.file` → client sent no file (or wrong key name) → 400.
 - `await` is required - otherwise we send the response before the upload finishes.
 
+- Delete route
+  ```ts
+  fileUploadRouter.delete('/image', async (req, res, next) => {
+      try {
+          await removeUserAvatar(req.user!.userId);
+
+          res.status(200).json({
+              success: true,
+              message: "Avatar deleted successfully",
+          });
+      } catch (error) {
+          next(error);
+      }
+  });
+  ```
+  - Same path `/image`, different HTTP method (`DELETE`) - same idea as GET & POST on `/api/tasks`.
+  - `authenticate` already runs because of `fileUploadRouter.use(authenticate)`.
+  - No `upload.single(...)` - client sends no file, so multer is not needed.
+  - No `public_id` in the URL/body - we take `userId` from the token and find the public_id from DB. So a user can only delete their OWN avatar.
+
 ### Step 10: Register route (`src/routes/index.ts`)
 
 ```ts
 apiRouter.use("/uploads", fileUploadRouter)
 ```
 
-- `/api` (app.ts) + `/uploads` (index.ts) + `/image` (route) → **POST /api/uploads/image**
+- `/api` (app.ts) + `/uploads` (index.ts) + `/image` (route) →
+  - **POST /api/uploads/image** - upload / replace avatar
+  - **DELETE /api/uploads/image** - delete avatar
 
 ### Step 11: Handle multer errors (`src/middlewares/errorHandler.ts`)
 
@@ -6760,6 +6849,39 @@ updateUserAvatar(...) → DB now points to xyz789
 deleteImage("abc123") → old image removed from Cloudinary (no garbage left)
 ```
 
+### Example - user deletes avatar
+
+- Request (no body needed)
+  ```
+  DELETE /api/uploads/image
+  Authorization: Bearer <accessToken>
+  ```
+  ```
+  curl -X DELETE http://localhost:5001/api/uploads/image \
+    -H "Authorization: Bearer <accessToken>"
+  ```
+- What happens inside
+  ```
+  authenticate          → req.user = { userId: "u1", ... }
+  findUserAvatar("u1")  → { avatar_public_id: ".../xyz789" }
+  clearUserAvatar("u1") → DB columns = NULL
+  deleteImage("xyz789") → image removed from Cloudinary
+  ```
+- DB after
+  ```
+  id | email          | avatar_url | avatar_public_id
+  ---+----------------+------------+-----------------
+  u1 | test@gmail.com | NULL       | NULL
+  ```
+- Response (200)
+  ```
+  {
+      "success": true,
+      "message": "Avatar deleted successfully"
+  }
+  ```
+- Calling DELETE again → 404 "No avatar to delete"
+
 ### Error cases
 
 | Situation | Who catches it | Response |
@@ -6769,12 +6891,16 @@ deleteImage("abc123") → old image removed from Cloudinary (no garbage left)
 | File > 10 MB | multer → MulterError → errorHandler | 400 "File size cannot be more than 10mb." |
 | No file / wrong key name | route `!req.file` | 400 "Image file is required" |
 | User deleted from DB | service | 404 "User not found" |
-| Cloudinary down / wrong keys | service → errorHandler | 500 |
+| Cloudinary down / wrong keys (upload) | service → errorHandler | 500 |
+| DELETE but user has no avatar | service (`removeUserAvatar`) | 404 "No avatar to delete" |
+| DELETE - Cloudinary delete fails | service - only logged | 200 (DB already cleared, unused image left in Cloudinary) |
 
 ### Quick revision
 
 - Image bytes → Cloudinary. URL + public_id → Postgres.
 - multer reads the file, Cloudinary stores it, repository saves the URL against the user.
 - `cloudinary.service.ts` = talks to Cloudinary only (reusable). `file.upload.service.ts` = avatar feature logic.
-- Adding columns = migration (once). Saving URL = repository UPDATE (every upload).
-- Order: upload new → save in DB → delete old.
+- Adding columns = migration (once). Saving URL = repository UPDATE (every upload). Deleting avatar = repository UPDATE to NULL (not `DELETE FROM users`).
+- Upload order: upload new → save in DB → delete old.
+- Delete order: clear DB → delete from Cloudinary.
+- Rule for both: the DB should never point to an image that doesn't exist.
