@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 import { logger } from "../lib/logger";
 import { AppError } from "../errors/AppError";
+import multer from "multer";
 
 // Network-level codes thrown by pg when the database can't be reached
 // (AggregateError from pg-pool also carries the code at the top level)
@@ -39,6 +40,15 @@ export const errorHandler = (
         res.status(503).json({
             success: false,
             message: 'Service temporarily unavailable. Please try again later.'
+        });
+        return
+    }
+
+    if (err instanceof multer.MulterError){
+        logger.error({err}, 'Multer file size limit error');
+        res.status(400).json({
+            success: false,
+            message: "File size cannot be more than 10mb."
         });
         return
     }

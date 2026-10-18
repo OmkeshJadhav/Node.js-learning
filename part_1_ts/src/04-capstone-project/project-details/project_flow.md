@@ -6187,13 +6187,13 @@ startNotificationSubscriber().catch((error) => {
       if (file.mimetype.startsWith("image/")) {
         callback(null, true);
       } else {
-        callback(new Error("Only image files are allowed"));
+        callback(new AppError(400, "Only image files are allowed"));
       }
     },
   });
   ```
 
-- storage: multer.memoryStorage() - This temporarily holds the uploaded file in your server's memory instead of saving it to a local folder. We can then send its buffer directly to Cloudinary.
+- storage: multer.memoryStorage() - This temporarily holds the uploaded file in server's memory instead of saving it to a local folder. We can then send its buffer directly to Cloudinary.
 
 - The 5 MB limit helps control upload sizes. In a production application, validate the actual file format too, because a MIME type alone isn't sufficient to prove that a file is a genuine image.
 
@@ -6226,12 +6226,13 @@ export function uploadImage(buffer: Buffer) {
         }
 
         resolve({
-          secure_url: result.secure_url,
-          public_id: result.public_id,
+          secure_url: result.secure_url ?? "",
+          public_id: result.public_id ?? "",
         });
       },
     );
 
+    // sending image bytes to cloudinary
     stream.end(buffer);
   });
 }
@@ -6311,3 +6312,469 @@ Forgetting old images	Track public_id and clean up obsolete assets safely.
 Uploading files to local server folders in production	Use persistent object storage or a media service such as Cloudinary when appropriate.
 
 - One additional consideration: Cloudinary URLs are often publicly accessible by default. If you're storing private medical documents, identity documents, or other sensitive files, use an appropriate private-storage and access-control strategy rather than exposing public URLs.
+
+## File Upload flow
+
+- Why file upload? A logged-in user wants to set a profile picture (avatar). We should NOT store the image bytes in Postgres - images are big and make the DB slow. Instead:
+  - The image itself is stored in **Cloudinary** (a media storage service).
+  - Our DB stores only 2 small strings: the image **URL** (to show it) and the **public_id** (to delete it later).
+- Simple analogy:
+  - Cloudinary = a locker room where we keep the actual photo.
+  - secure_url = the address of the locker (anyone with it can see the photo).
+  - public_id = the locker key number (our backend uses it to empty the locker / delete the photo).
+  - users table = our register book, where we write "user X → locker address + key number".
+
+### Big picture
+
+```
+ Client (Postman / React)
+     │  POST /api/uploads/image
+     │  Header: Authorization: Bearer <token>
+     │  Body: form-data → image = profile.jpg
+     ↓
+ ┌───────────────────────────────────────────────────────────────┐
+ │ Our Express server                                            │
+ │                                                               │
+ │  authenticate ──→ multer ──→ route ──→ service ──┬──→ Cloudinary (store image)
+ │  (who is it?)   (read file) (check)  (logic)     │                       │
+ │                                                  │   secure_url + public_id
+ │                                                  ↓                       │
+ │                                             repository ←─────────────────┘
+ │                                                  │
+ │                                                  ↓
+ │                                     Postgres: users.avatar_url,
+ │                                               users.avatar_public_id
+ └───────────────────────────────────────────────────────────────┘
+     │
+     ↓
+ 201 { success, data: { avatar: { imageUrl, publicId } } }
+```
+
+- Later, when frontend shows the profile, it uses `imageUrl` directly in `<img src="...">`. The browser downloads the image from Cloudinary, not from our server.
+
+### Files involved and the job of each file
+
+| # | File | Layer | Job (in one line) |
+|---|---|---|---|
+| 1 | `.env` + `src/config/env.ts` | Config | Holds & validates Cloudinary keys |
+| 2 | `src/config/cloudinary.ts` | Config | Sets up the Cloudinary SDK once with those keys |
+| 3 | `migrations/005_add_avatar_to_users.sql` | DB schema | Adds `avatar_url` & `avatar_public_id` columns to `users` table (runs once) |
+| 4 | `src/types/user.ts` | Types | `DBUserAvatarRow` - shape of the avatar data we read from DB |
+| 5 | `src/middlewares/upload.middleware.ts` | Middleware | multer - reads the file from the request, checks type & size |
+| 6 | `src/services/cloudinary.service.ts` | External service | Talks ONLY to Cloudinary: `uploadImage`, `deleteImage` |
+| 7 | `src/repositories/file.upload.repository.ts` | Repository | Talks ONLY to Postgres: `findUserAvatar`, `updateUserAvatar` |
+| 8 | `src/services/file.upload.service.ts` | Service (business logic) | The "change my avatar" feature - decides the ORDER of steps |
+| 9 | `src/routes/file.upload.routes.ts` | Route | Receives request, checks file exists, sends response |
+| 10 | `src/routes/index.ts` | Route | Plugs the router at `/uploads` |
+| 11 | `src/middlewares/errorHandler.ts` | Middleware | Converts multer errors (file too big) into 400 |
+
+- Same layering as tasks: **Route → Service → Repository → DB**. The only new thing is that the service also calls a second "outside system" - Cloudinary.
+
+```
+                     file.upload.service.ts   (business logic - the "manager")
+                      /                    \
+                     ↓                      ↓
+     cloudinary.service.ts         file.upload.repository.ts
+     (talks to Cloudinary)         (talks to Postgres)
+```
+
+- Why is `cloudinary.service.ts` separate from `file.upload.service.ts`?
+  - `cloudinary.service.ts` knows nothing about users. It just uploads bytes and deletes by id. So the same `uploadImage()` can be reused later for banners (`banners` table), task attachments etc.
+  - `file.upload.service.ts` knows the avatar feature - which user, which table, what to do if something fails.
+  - If we put the users-table logic inside `cloudinary.service.ts`, we could not reuse it for banners.
+
+### Step 1: Env variables (`.env` + `env.ts`)
+
+- In `.env`
+  ```
+  CLOUDINARY_CLOUD_NAME=xxxx
+  CLOUDINARY_API_KEY=xxxx
+  CLOUDINARY_API_SECRET=xxxx
+  ```
+- In `env.ts` - add them using `checkRequiredEnvVariables`, so the app crashes at startup if a key is missing (better than failing later on the first upload)
+  ```ts
+  cloudinaryCloudName: checkRequiredEnvVariables('CLOUDINARY_CLOUD_NAME'),
+  cloudinaryApiKey: checkRequiredEnvVariables('CLOUDINARY_API_KEY'),
+  cloudinaryApiSecret: checkRequiredEnvVariables('CLOUDINARY_API_SECRET')
+  ```
+- Rule: only `env.ts` reads `process.env`. Every other file imports `env`.
+- The API secret must stay on the backend. Never put it in Frontend.
+
+### Step 2: Cloudinary config (`src/config/cloudinary.ts`)
+
+```ts
+import { v2 as cloudinary } from "cloudinary";
+import { env } from "./env";
+
+cloudinary.config({
+    cloud_name: env.cloudinaryCloudName,
+    api_key: env.cloudinaryApiKey,
+    api_secret: env.cloudinaryApiSecret,
+    secure: true,   // always generate https URLs
+});
+
+export { cloudinary };
+```
+
+- Why here? Configure the SDK once, export the ready instance, everyone imports it.
+- Why `import { env } from "./env"`? `env.ts` is in the same `config` folder → `./env`. Importing it also guarantees `dotenv.config()` has run before `cloudinary.config()`.
+
+### Step 3: Add columns to users table (`migrations/005_add_avatar_to_users.sql`) - Run only once to add columns in table
+
+```sql
+ALTER TABLE users
+    ADD COLUMN avatar_url TEXT,
+    ADD COLUMN avatar_public_id TEXT;
+```
+
+- Run once: `npm run migrate`
+- Why a migration and not a repository query? Adding a column changes the **structure** of the table - it happens only ONCE. A repository function runs on EVERY request. Structure changes = migration. Reading/writing data = repository.
+- Both columns can be NULL - old users don't have an avatar yet.
+- users table after migration
+  ```
+  id | email          | ... | avatar_url | avatar_public_id
+  ---+----------------+-----+------------+-----------------
+  u1 | test@gmail.com | ... | NULL       | NULL
+  ```
+
+### Step 4: Type (`src/types/user.ts`)
+
+```ts
+export type DBUserAvatarRow = {
+    id: string,
+    avatar_url: string | null,
+    avatar_public_id: string | null
+}
+```
+
+- `string | null` because a user may not have an avatar yet.
+
+### Step 5: multer middleware (`src/middlewares/fileUpload.middleware.ts`)
+
+- Problem: `express.json()` can only read JSON. A file is sent as `multipart/form-data`. multer reads that format.
+- `memoryStorage()` → file is kept in RAM as a Buffer (`req.file.buffer`), not saved to a folder. We pass that buffer straight to Cloudinary.
+- `limits.fileSize` → reject big files (10 MB here)
+- `fileFilter` → allow only `image/*` mimetypes
+- After multer runs, `req.file` looks like:
+  ```
+  {
+      fieldname: 'image',
+      originalname: 'profile.jpg',
+      mimetype: 'image/jpeg',
+      size: 245678,
+      buffer: <Buffer ff d8 ff e0 ...>   ← actual image bytes
+  }
+  ```
+- Middleware code
+    ```ts
+    import multer from "multer";
+    import { AppError } from "../errors/AppError";
+
+    const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
+
+    export const upload = multer({
+        storage: multer.memoryStorage(),  // temporarily holds the uploaded file in server's memory/RAM
+        limits: {
+            fileSize: MAX_FILE_SIZE
+        },
+        fileFilter: (_req, file, callback) => {
+            if (file.mimetype.startsWith("image/")) {
+                callback(null, true);
+            } else {
+                callback(new AppError(400, "Only image files are allowed"));
+            }
+        },
+    });
+    ```
+
+### Step 6: Cloudinary service (`src/services/cloudinary.service.ts`)
+
+- `uploadImage(buffer)`
+  - `upload_stream` opens a stream to Cloudinary, `stream.end(buffer)` pushes the bytes into it.
+  - Cloudinary gives the result in a **callback**, so we wrap it in a `Promise` → now we can use `await uploadImage(...)`.
+  - Returns `{ secure_url, public_id }`
+
+  ```ts
+  import { cloudinary } from "../config/cloudinary";
+
+    const cloudinary_folder = "cloudinary-learning/images"
+
+    export const uploadImage = (buffer: Buffer) => {
+        return new Promise<{
+            secure_url: string;
+            public_id: string;
+        }>((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+                {
+                    folder: cloudinary_folder,
+                    resource_type: "image",
+                },
+                (error, result) => {
+                    if (error) {
+                        reject(error);
+                        return;
+                    }
+
+                    if (!result) {
+                        reject(new Error("Cloudinary returned no result"));
+                        return;
+                    }
+
+                    resolve({
+                        secure_url: result.secure_url,
+                        public_id: result.public_id,
+                    });
+                },
+            );
+
+            // sending image bytes to cloudinary
+            stream.end(buffer);
+        });
+    }
+
+  ```
+  - Example result from Cloudinary
+  ```
+  secure_url: "https://res.cloudinary.com/<cloud>/image/upload/v1729/cloudinary-learning/images/abc123.jpg"
+  public_id:  "cloudinary-learning/images/abc123"
+  ```
+
+- `deleteImage(publicId)`
+  - `cloudinary.uploader.destroy(publicId)` → deletes the image from Cloudinary.
+  - This is why we must save `public_id` - without it we can never delete the image.
+
+  ```ts
+    export async function deleteImage(publicId: string): Promise<void> {
+        await cloudinary.uploader.destroy(publicId, { resource_type: "image" });
+    }
+  ```
+
+### Step 7: Repository (`src/repositories/file.upload.repository.ts`)
+
+- `updateUserAvatar(userId, avatarUrl, avatarPublicId)` → saves the new URL & id against THIS user.
+  ```ts
+    export const updateUserAvatar = async (
+        userId: string,
+        avatarUrl: string,
+        avatarPublicId: string
+    ): Promise<DBUserAvatarRow | null> => {
+        const result = await pool.query<DBUserAvatarRow>(
+            `
+            UPDATE users
+            SET avatar_url = $2,
+                avatar_public_id = $3,
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING id, avatar_url, avatar_public_id
+            `,
+            [userId, avatarUrl, avatarPublicId]
+        )
+
+        return result.rows[0] ?? null
+    }
+  ```
+  - `UPDATE` not `INSERT` - the user row already exists, we only fill 2 columns of it.
+  - `WHERE id = $1` - this is why `userId` is needed. Without it, the DB doesn't know which user's row to update.
+  - `userId` comes from the token (`req.user.userId`), never from the body - so a user can't change someone else's avatar.
+
+- `findUserAvatar(userId)` → reads current `avatar_url` & `avatar_public_id`. Needed to know the OLD image so we can delete it after replacing.
+    ```ts
+        export const findUserAvatar = async (userId: string): Promise<DBUserAvatarRow | null> => {
+        const result = await pool.query<DBUserAvatarRow>(
+            `
+            SELECT id, avatar_url, avatar_public_id
+            FROM users
+            WHERE id = $1
+            `,
+            [userId]
+        )
+
+        return result.rows[0] ?? null
+    }
+    ```
+
+
+### Step 8: Business logic service (`src/services/file.upload.service.ts`)
+
+- `uploadUserAvatar(userId, buffer)` - the order of steps is the important part:
+  ```
+  1. findUserAvatar(userId)            → remember OLD public_id (may be null)
+              │
+              ├── user not found ──→ AppError 404
+              ↓
+  2. uploadImage(buffer)               → NEW image is now in Cloudinary
+              │
+              ├── Cloudinary fails ──→ error (nothing changed, old avatar still fine)
+              ↓
+  3. updateUserAvatar(userId, new url, new id)
+              │
+              ├── DB fails ──→ deleteImage(NEW public_id) so it isn't left as garbage, then throw
+              ↓
+  4. deleteImage(OLD public_id)        → only if user had an old avatar
+              │
+              ├── fails ──→ just log it (user already has the new avatar, don't fail the request)
+              ↓
+  5. return { imageUrl, publicId }
+  ```
+- Why this order?
+  - If we deleted the old image FIRST and then the upload failed → user has no avatar at all. Bad.
+  - Upload → save → delete old means at every moment the user has a working avatar.
+
+  ```ts
+    import { AppError } from "../errors/AppError"
+    import { logger } from "../lib/logger"
+    import { findUserAvatar, updateUserAvatar } from "../repositories/file.upload.repository"
+    import { deleteImage, uploadImage } from "./cloudinary.service"
+
+    export const uploadUserAvatar = async (userId: string, buffer: Buffer) => {
+        const existingUser = await findUserAvatar(userId)
+
+        if (!existingUser) {
+            throw new AppError(404, "User not found")
+        }
+
+        // 1. Upload the new image first
+        const { secure_url, public_id } = await uploadImage(buffer)
+
+        // 2. Save it in the DB - if this fails, remove the new image so it isn't orphaned in Cloudinary
+        let updatedUser
+        try {
+            updatedUser = await updateUserAvatar(userId, secure_url, public_id)
+        } catch (error) {
+            await deleteImage(public_id).catch((err) =>
+                logger.error({ err }, "Failed to clean up new avatar after DB error")
+            )
+            throw error
+        }
+
+        // 3. Only now delete the old image - failure here shouldn't fail the request
+        if (existingUser.avatar_public_id) {
+            await deleteImage(existingUser.avatar_public_id).catch((err) =>
+                logger.error({ err }, "Failed to delete old avatar from Cloudinary")
+            )
+        }
+
+        return {
+            imageUrl: updatedUser!.avatar_url,
+            publicId: updatedUser!.avatar_public_id,
+        }
+    }
+  ```
+
+### Step 9: Route (`src/routes/file.upload.routes.ts`)
+
+```ts
+export const fileUploadRouter = Router();
+
+fileUploadRouter.use(authenticate)
+
+fileUploadRouter.post('/image', upload.single("image"), async (req, res, next) => {
+    try {
+        if (!req.file) {
+            throw new AppError(400, "Image file is required");
+        }
+
+        const avatar = await uploadUserAvatar(req.user!.userId, req.file.buffer);
+
+        res.status(201).json({ success: true, data: { avatar } });
+    } catch (error) {
+        next(error);
+    }
+});
+```
+
+- Middlewares run left → right: `authenticate` (sets `req.user`) → `upload.single("image")` (sets `req.file`) → our handler.
+- `"image"` must match the form-data key name the client sends.
+- `!req.file` → client sent no file (or wrong key name) → 400.
+- `await` is required - otherwise we send the response before the upload finishes.
+
+### Step 10: Register route (`src/routes/index.ts`)
+
+```ts
+apiRouter.use("/uploads", fileUploadRouter)
+```
+
+- `/api` (app.ts) + `/uploads` (index.ts) + `/image` (route) → **POST /api/uploads/image**
+
+### Step 11: Handle multer errors (`src/middlewares/errorHandler.ts`)
+
+- File too big → multer throws `MulterError` (code `LIMIT_FILE_SIZE`). It is not an AppError, so without this it becomes 500.
+  ```ts
+  if (err instanceof multer.MulterError) {
+      res.status(400).json({
+          success: false,
+          message: err.code === "LIMIT_FILE_SIZE" ? "File size cannot be more than 10mb." : err.message
+      });
+      return   // ← must return, otherwise code continues and tries to send a 2nd response (500)
+  }
+  ```
+
+### Complete example - user uploads avatar for the first time
+
+- Request (Postman → Body → form-data → key `image`, type File)
+  ```
+  POST /api/uploads/image
+  Authorization: Bearer <accessToken>
+  image: profile.jpg
+  ```
+  ```
+  curl -X POST http://localhost:5001/api/uploads/image \
+    -H "Authorization: Bearer <accessToken>" \
+    -F "image=@./profile.jpg"
+  ```
+- What happens inside
+  ```
+  authenticate          → req.user = { userId: "u1", ... }
+  multer                → req.file.buffer = <bytes of profile.jpg>
+  route                 → req.file exists ✔
+  findUserAvatar("u1")  → { avatar_url: null, avatar_public_id: null }
+  uploadImage(buffer)   → { secure_url: "https://.../abc123.jpg", public_id: ".../abc123" }
+  updateUserAvatar(...) → users row u1 updated
+  old public_id is null → nothing to delete
+  ```
+- DB after
+  ```
+  id | email          | avatar_url                 | avatar_public_id
+  ---+----------------+----------------------------+---------------------------------
+  u1 | test@gmail.com | https://.../abc123.jpg     | cloudinary-learning/images/abc123
+  ```
+- Response (201)
+  ```
+  {
+      "success": true,
+      "data": {
+          "avatar": {
+              "imageUrl": "https://res.cloudinary.com/<cloud>/image/upload/v1729/cloudinary-learning/images/abc123.jpg",
+              "publicId": "cloudinary-learning/images/abc123"
+          }
+      }
+  }
+  ```
+
+### Example - same user uploads a NEW avatar (replace)
+
+```
+findUserAvatar("u1")  → old public_id = ".../abc123"
+uploadImage(buffer)   → new public_id = ".../xyz789"
+updateUserAvatar(...) → DB now points to xyz789
+deleteImage("abc123") → old image removed from Cloudinary (no garbage left)
+```
+
+### Error cases
+
+| Situation | Who catches it | Response |
+|---|---|---|
+| No / invalid token | authenticate | 401 |
+| Not an image (e.g. .pdf) | multer fileFilter → AppError | 400 "Only image files are allowed" |
+| File > 10 MB | multer → MulterError → errorHandler | 400 "File size cannot be more than 10mb." |
+| No file / wrong key name | route `!req.file` | 400 "Image file is required" |
+| User deleted from DB | service | 404 "User not found" |
+| Cloudinary down / wrong keys | service → errorHandler | 500 |
+
+### Quick revision
+
+- Image bytes → Cloudinary. URL + public_id → Postgres.
+- multer reads the file, Cloudinary stores it, repository saves the URL against the user.
+- `cloudinary.service.ts` = talks to Cloudinary only (reusable). `file.upload.service.ts` = avatar feature logic.
+- Adding columns = migration (once). Saving URL = repository UPDATE (every upload).
+- Order: upload new → save in DB → delete old.

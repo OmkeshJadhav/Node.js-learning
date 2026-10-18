@@ -21,3 +21,9 @@ export type TokenPayload = {
     email: string,
     role: string
 }
+
+export type DBUserAvatarRow = {
+    id: string,
+    avatar_url: string | null,
+    avatar_public_id: string | null
+}
