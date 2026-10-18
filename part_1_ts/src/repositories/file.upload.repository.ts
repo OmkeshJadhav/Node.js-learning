@@ -24,6 +24,23 @@ export const updateUserAvatar = async (
 }
 
 
+export const clearUserAvatar = async (userId: string): Promise<DBUserAvatarRow | null> => {
+    const result = await pool.query<DBUserAvatarRow>(
+        `
+        UPDATE users
+        SET avatar_url = NULL,
+            avatar_public_id = NULL,
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING id, avatar_url, avatar_public_id
+        `,
+        [userId]
+    )
+
+    return result.rows[0] ?? null
+}
+
+
 export const findUserAvatar = async (userId: string): Promise<DBUserAvatarRow | null> => {
     const result = await pool.query<DBUserAvatarRow>(
         `

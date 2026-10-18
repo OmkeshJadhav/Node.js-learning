@@ -1,6 +1,6 @@
 import { AppError } from "../errors/AppError"
 import { logger } from "../lib/logger"
-import { findUserAvatar, updateUserAvatar } from "../repositories/file.upload.repository"
+import { clearUserAvatar, findUserAvatar, updateUserAvatar } from "../repositories/file.upload.repository"
 import { deleteImage, uploadImage } from "./cloudinary.service"
 
 export const uploadUserAvatar = async (userId: string, buffer: Buffer) => {
@@ -35,4 +35,24 @@ export const uploadUserAvatar = async (userId: string, buffer: Buffer) => {
         imageUrl: updatedUser!.avatar_url,
         publicId: updatedUser!.avatar_public_id,
     }
+}
+
+export const removeUserAvatar = async (userId: string): Promise<void> => {
+    const existingUser = await findUserAvatar(userId)
+
+    if (!existingUser) {
+        throw new AppError(404, "User not found")
+    }
+
+    if (!existingUser.avatar_public_id) {
+        throw new AppError(404, "No avatar to delete")
+    }
+
+    // 1. Clear the DB first - so the user never points to an image that no longer exists
+    await clearUserAvatar(userId)
+
+    // 2. Then delete from Cloudinary - failure here only leaves an unused image, so just log it
+    await deleteImage(existingUser.avatar_public_id).catch((err) =>
+        logger.error({ err }, "Failed to delete avatar from Cloudinary")
+    )
 }
