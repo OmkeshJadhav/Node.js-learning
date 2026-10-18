@@ -3039,3 +3039,2819 @@
         "message": "Access Token is required"
     }
     ```
+
+
+# Redis
+
+## Definition
+
+- Redis (**RE**mote **DI**ctionary **S**erver) is an in-memory data store that stores and retrieves data using **keys**.
+- Think of it as a giant, very fast `key → value` map that lives on a server and can be shared by many backend instances.
+- Redis keeps data primarily in **RAM**, which makes reads/writes extremely fast (often sub-millisecond).
+- It can also **persist data to disk** (RDB snapshots / AOF logs), so data can survive a restart — it is not limited to temporary storage.
+- Values are not just strings: Redis supports data structures like **Strings, Lists, Sets, Sorted Sets, Hashes**, and more.
+
+## Why Redis is needed even though we have a normal backend database
+
+- **Frequently accessed data:** Redis can return a cached result for repeated requests, reducing repeated database work.
+- **Speed:** Reading from RAM is much faster than running a query on PostgreSQL (disk, query planning, joins).
+- **Reduced DB load:** Fewer queries hit the main database, so it can handle more users.
+- **Shared state:** Multiple server instances can share the same data (sessions, counters, rate limits) through one Redis.
+
+> Redis usually **does not replace** the main database. PostgreSQL stays the source of truth; Redis sits beside it as a fast helper layer.
+
+## Usages
+
+- **Caching:** Temporary fast layer in front of the main database.
+- **Rate limiting:** Limit how many requests a user can make within a time window.
+- **Counting:** e.g. counting page views or likes (`INCR` is atomic, so no race conditions).
+- **Sessions:** Store logged-in user session data with an expiry.
+- **Message broker:** Pub/Sub and Streams for sending messages between services.
+- **Background jobs / queues:** Job queue libraries (e.g. BullMQ) use Redis to store jobs.
+- **Leaderboards:** Sorted Sets keep items ranked by score.
+
+## Redis vs PostgreSQL
+
+| Feature              | PostgreSQL                                 | Redis                                     |
+| -------------------- | ------------------------------------------ | ----------------------------------------- |
+| Primary storage      | Disk-backed database with memory caching   | Primarily in-memory                       |
+| Typical access speed | Depends on query, indexes, and cache state | Very low-latency key access               |
+| Data model           | Relational tables                          | Key-value and specialized data structures |
+| Querying             | SQL, joins, aggregations                   | Commands on keys and data structures      |
+| Common use           | Persistent business data                   | Caching, counters, rate limits, sessions  |
+| Persistence          | Durable database storage                   | Configurable persistence options          |
+| Data size            | Limited by disk (can be very large)        | Limited by available RAM                  |
+
+## Redis setup
+
+### 1. Run Redis with Docker
+
+Redis runs as a container defined in `docker-compose.yml` (alongside PostgreSQL):
+
+```yaml
+redis:
+  image: redis:7-alpine # lightweight Redis 7 image
+  container_name: redis_course_redis
+  restart: unless-stopped
+  ports:
+    - "6379:6379" # 6379 = default Redis port (host:container)
+  volumes:
+    - redis_data:/data # persist Redis data across container restarts
+```
+
+```bash
+docker compose up -d                              # start Postgres + Redis in the background
+docker ps                                         # confirm redis_course_redis is running
+docker exec -it redis_course_redis redis-cli      # open the Redis CLI inside the container
+127.0.0.1:6379> PING                              # → PONG means Redis is working
+```
+
+### 2. Install the Node.js client
+
+```bash
+npm install redis        # official Redis client for Node.js (v6 in package.json)
+npm install -D tsx       # run TypeScript files directly without compiling
+```
+
+### 3. Add the connection URL to `.env`
+
+```env
+REDIS_URL=redis://localhost:6379
+```
+
+URL format: `redis://[username:password@]host:port[/db-number]`
+
+### 4. Connect from code (`exmples/redis-data-types.ts`)
+
+```ts
+import dotenv from "dotenv";
+import { createClient } from "redis";
+
+dotenv.config(); // load variables from .env into process.env
+
+const redis = createClient({ url: process.env.REDIS_URL });
+
+redis.on("error", (err) => console.error("Redis error:", err)); // log connection errors
+
+const run = async () => {
+  await redis.connect(); // must be awaited before sending commands
+  console.log("Connected to Redis.");
+  console.log("Ping", await redis.ping()); // → "PONG"
+  await redis.close(); // close the connection so the script exits
+};
+
+run().catch((error) => {
+  console.error("Demo failed: ", error);
+  process.exit(1);
+});
+```
+
+Key points:
+
+- `createClient()` only **creates** the client; `connect()` actually opens the connection.
+- All commands are **async** and return Promises → use `await`.
+- `ping()` is the simplest health check: Redis replies `PONG`.
+- Call `close()` at the end of scripts, otherwise the open connection keeps Node running.
+
+### 5. Run the example
+
+A script was added to `package.json`:
+
+```json
+"example:redis-types": "tsx exmples/redis-data-types.ts"
+```
+
+```bash
+npm run example:redis-types
+# Connected to Redis.
+# Ping PONG
+```
+
+## Commands
+
+| Command      | Purpose                               | Example                                          |
+| ------------ | ------------------------------------- | ------------------------------------------------ |
+| `SET`        | Store a value                         | `SET user:1:name "Omkesh"`                       |
+| `GET`        | Retrieve a value                      | `GET user:1:name` → `"Omkesh"`                   |
+| `DEL`        | Delete a key                          | `DEL user:1:name` → `1` (number of keys deleted) |
+| `EXISTS`     | Check whether a key exists            | `EXISTS user:1:name` → `1` (yes) / `0` (no)      |
+| `EXPIRE`     | Set a key's expiration (seconds)      | `EXPIRE user:1:name 60`                          |
+| `TTL`        | Check remaining lifetime (seconds)    | `TTL user:1:name` → `58`                         |
+| `SET ... EX` | Store a value with expiry in one step | `SET otp:123 "4567" EX 300`                      |
+| `INCR`       | Atomically increase a number by 1     | `INCR post:10:views`                             |
+
+`TTL` return values:
+
+- `> 0` → seconds left before the key is deleted
+- `-1` → key exists but has **no expiry**
+- `-2` → key **does not exist** (or already expired)
+
+Same commands in Node.js (`redis` client uses camelCase):
+
+```ts
+await redis.set("user:1:name", "Omkesh");
+await redis.get("user:1:name"); // 'Omkesh'
+await redis.set("otp:123", "4567", { expiration: { type: "EX", value: 300 } }); // expires in 300s
+await redis.expire("user:1:name", 60);
+await redis.ttl("user:1:name");
+await redis.exists("user:1:name"); // 1 or 0
+await redis.del("user:1:name");
+```
+
+> **Key naming convention:** use `:` to namespace keys, e.g. `user:1:profile`, `post:10:views`. It keeps keys readable and organized.
+
+## Redis Data Types
+
+Code for all examples: `exmples/redis-data-types.ts` → run with `npm run example:redis-types`.
+
+Every Redis entry is `key → value`. The **data type** decides what the value looks like and which commands you can run on it.
+
+### Quick summary: which type should I use?
+
+| Type           | What it holds                                     | Think of it as               | Typical use                           |
+| -------------- | ------------------------------------------------- | ---------------------------- | ------------------------------------- |
+| **String**     | One value (text or number)                        | A single variable            | Cache a value, counters, OTP          |
+| **Hash**       | Many `field → value` pairs                        | A JS object `{ name, city }` | User profile, settings                |
+| **List**       | Ordered values (duplicates allowed)               | A JS array                   | Recent messages, activity feed, queue |
+| **Set**        | Unique values, no order                           | A JS `Set`                   | Tags, unique visitors                 |
+| **Sorted Set** | Unique values, each with a score, sorted by score | A ranked list                | Leaderboards, top-N, priority         |
+
+> Node.js client method names = Redis command in camelCase: `HSET` → `hSet`, `LPUSH` → `lPush`, `ZADD` → `zAdd`.
+
+---
+
+### 1. String: one key → one value
+
+The simplest type. The value can be text, a number, or JSON (`JSON.stringify`).
+
+```ts
+const stringKey = "demo:page_views";
+
+await redis.set(stringKey, 100); // store
+const pageViews = await redis.get(stringKey);
+console.log(pageViews); // '100'  ← comes back as a STRING, not a number
+```
+
+**Strings as counters:** if the value looks like a number, `INCR` adds 1 to it.
+
+```ts
+const afterIncr = await redis.incr(stringKey);
+console.log(afterIncr); // 101  ← INCR returns a number
+```
+
+- `INCR` is **atomic**: if 1000 requests call it at the same time, none are lost (no read → add → write race).
+- If the key doesn't exist, `INCR` treats it as `0` → result `1`.
+- Related: `INCRBY key 5`, `DECR key`, `DECRBY key 5`.
+
+CLI:
+
+```
+SET demo:page_views 100
+GET demo:page_views      → "100"
+INCR demo:page_views     → 101
+```
+
+---
+
+### 2. Hash: one key → many fields
+
+Use when one "thing" has several properties. Like storing a small object under one key.
+
+```ts
+const hashKey = "demo:user:profile";
+
+await redis.hSet(hashKey, {
+  // set one or many fields at once
+  name: "Omkesh",
+  city: "Pune",
+});
+
+const profileData = await redis.hGetAll(hashKey); // read all fields
+console.log(profileData); // { name: 'Omkesh', city: 'Pune' }
+```
+
+Other useful hash commands:
+| Command | Node.js | What it does |
+|---|---|---|
+| `HGET key field` | `hGet(key, 'city')` | Read one field → `'Pune'` |
+| `HDEL key field` | `hDel(key, 'city')` | Delete one field |
+| `HINCRBY key field n` | `hIncrBy(key, 'age', 1)` | Increase a numeric field |
+
+**Hash vs String with JSON:** with a hash you can read/update **one field** (`hSet(key, { city: 'Mumbai' })`) without reading and rewriting the whole object.
+
+> All hash values are stored as strings, so `hGetAll` always returns strings.
+
+CLI:
+
+```
+HSET demo:user:profile name "Omkesh" city "Pune"
+HGETALL demo:user:profile
+HGET demo:user:profile city    → "Pune"
+```
+
+---
+
+### 3. List: ordered values
+
+Keeps values in insertion order. Duplicates are allowed. You can add/remove from **both ends**.
+
+```ts
+const listKey = "demo:message";
+
+await redis.lPush(listKey, "X"); // [X]
+await redis.lPush(listKey, "Y"); // [Y, X]
+await redis.lPush(listKey, "Z"); // [Z, Y, X]
+
+const extractMessage = await redis.lRange(listKey, 0, -1); // read all
+console.log(extractMessage); // [ 'Z', 'Y', 'X' ]
+```
+
+**Why `Z, Y, X` and not `X, Y, Z`?** `lPush` = push on the **Left** (start). Each new item goes in front, so the newest comes first. Use `rPush` to keep `X, Y, Z` order.
+
+| Command                 | Node.js                   | What it does                                   |
+| ----------------------- | ------------------------- | ---------------------------------------------- |
+| `LPUSH`                 | `lPush(key, v)`           | Add to the **start** (left)                    |
+| `RPUSH`                 | `rPush(key, v)`           | Add to the **end** (right)                     |
+| `LRANGE key start stop` | `lRange(key, 0, -1)`      | Read items by index (`0` = first, `-1` = last) |
+| `LTRIM key start stop`  | `lTrim(key, 0, 9)`        | Keep only that range, delete everything else   |
+| `LPOP` / `RPOP`         | `lPop(key)` / `rPop(key)` | Remove and return an item from start / end     |
+| `LLEN`                  | `lLen(key)`               | Number of items                                |
+
+**Common pattern: "latest 10 messages"**
+
+```ts
+await redis.lPush("chat:recent", newMessage); // newest at the front
+await redis.lTrim("chat:recent", 0, 9); // keep only 10 newest
+await redis.lRange("chat:recent", 0, -1); // read them
+```
+
+`LPUSH` + `RPOP` (or `RPUSH` + `LPOP`) = a simple **queue** (first in, first out).
+
+> ⚠️ Gotcha: lists keep growing. Running the example script twice gives `[Z, Y, X, Z, Y, X]`. Use `del(key)` or `lTrim` to reset/limit it.
+
+---
+
+### 4. Set: unique values only
+
+No duplicates, no guaranteed order. Adding an existing value does nothing.
+
+```ts
+const setKey = "demo:tags";
+
+await redis.sAdd(setKey, "nodejs");
+await redis.sAdd(setKey, "reactjs");
+await redis.sAdd(setKey, "nextjs");
+await redis.sAdd(setKey, "nodejs"); // duplicate → ignored (returns 0)
+
+const tagCount = await redis.sCard(setKey); // count members
+console.log(tagCount); // 3  (not 4)
+```
+
+| Command     | Node.js             | What it does                                |
+| ----------- | ------------------- | ------------------------------------------- |
+| `SADD`      | `sAdd(key, v)`      | Add value(s); returns how many were **new** |
+| `SCARD`     | `sCard(key)`        | Count of members (**Card**inality)          |
+| `SMEMBERS`  | `sMembers(key)`     | Get all members                             |
+| `SISMEMBER` | `sIsMember(key, v)` | Is `v` in the set? → `1` / `0` (true/false) |
+| `SREM`      | `sRem(key, v)`      | Remove a member                             |
+
+Use cases: tags on a post, "unique visitors today" (add user IDs; count with `SCARD`), "has this user already liked this post?" (`SISMEMBER`).
+
+---
+
+### 5. Sorted Set (ZSet): unique values + score, auto-sorted
+
+Like a Set, but each member has a numeric **score**. Redis keeps members sorted by score at all times. Commands start with `Z`.
+
+```ts
+const rankKey = "demo:leaderboard";
+
+await redis.zAdd(rankKey, { score: 100, value: "player_a" });
+await redis.zAdd(rankKey, { score: 200, value: "player_b" });
+
+const newScore = await redis.zIncrBy(rankKey, 50, "player_a"); // 100 + 50
+console.log(newScore); // 150
+
+const rank = await redis.zRevRank(rankKey, "player_a");
+console.log(rank); // 1  → 2nd place (player_b has 200)
+```
+
+**Rank is 0-based:**
+
+- `ZRANK` → position in **ascending** order (lowest score = 0).
+- `ZREVRANK` → position in **descending** order (**highest score = 0 = top rank**). Use this for leaderboards.
+- So rank `0` = 1st place, rank `1` = 2nd place, etc.
+
+| Command          | Node.js                            | What it does                               |
+| ---------------- | ---------------------------------- | ------------------------------------------ |
+| `ZADD`           | `zAdd(key, { score, value })`      | Add member / update its score              |
+| `ZINCRBY`        | `zIncrBy(key, 50, member)`         | Add to a member's score, returns new score |
+| `ZREVRANK`       | `zRevRank(key, member)`            | Rank, highest score first (0 = top)        |
+| `ZSCORE`         | `zScore(key, member)`              | Get a member's score                       |
+| `ZRANGE ... REV` | `zRange(key, 0, 9, { REV: true })` | Top 10 members                             |
+
+Use cases: game leaderboards, "most viewed posts", priority queues, scheduling (score = timestamp).
+
+---
+
+### TTL (Time To Live): auto-delete keys
+
+Not a data type. Works on **any** key type. Tells Redis to delete the key automatically after N seconds.
+
+```ts
+const otpKey = "demo:otp";
+
+await redis.set(otpKey, "123456");
+await redis.expire(otpKey, 60); // delete after 60 seconds
+
+const ttl = await redis.ttl(otpKey);
+console.log(ttl); // 60 (seconds left)
+```
+
+- Shortcut, set value + expiry in one step: `set(otpKey, '123456', { expiration: { type: 'EX', value: 60 } })`.
+- `TTL` returns: `> 0` seconds left, `-1` no expiry set, `-2` key doesn't exist.
+- ⚠️ A plain `SET` on an existing key **removes its TTL** unless you pass the expiry again.
+
+Use cases: OTPs, sessions, cache entries, rate-limit windows.
+
+---
+
+### Cheat-sheet: example output of `npm run example:redis-types`
+
+```
+Connected to Redis.
+Ping PONG
+100                                  ← GET (string)
+101                                  ← INCR
+{ name: 'Omkesh', city: 'Pune' }     ← HGETALL
+[ 'Z', 'Y', 'X' ]                    ← LRANGE (LPUSH adds to the front)
+3                                    ← SCARD (duplicate 'nodejs' ignored)
+150                                  ← ZINCRBY
+1                                    ← ZREVRANK (0 = top, so 2nd place)
+60                                   ← TTL
+```
+
+## Redis in a Node.js project
+
+**Goal:** the Express app connects to Redis **once** when the server starts, reuses that **same connection** for every request, and closes it cleanly when the server stops.
+
+### Big picture
+
+Files involved:
+
+```
+docker-compose.yml     → runs the Redis SERVER (a container)
+.env                   → REDIS_URL = where the Redis server lives
+src/redis/client.ts    → creates ONE Redis client + connectRedis / disconnectRedis helpers
+src/server.ts          → loads .env first, calls connectRedis() at startup, disconnectRedis() on shutdown
+any route / service    → import { redisClient } and run commands
+```
+
+What happens when the app runs:
+
+```
+npm run dev
+  └─ server.ts → import "dotenv/config"  → .env loaded FIRST
+               → startServer()
+       ├─ testConnection()   → is Postgres reachable?
+       ├─ connectRedis()     → is Redis reachable?
+       └─ app.listen()       → only NOW start accepting requests
+  ... requests use redisClient (already connected) ...
+Ctrl+C (SIGINT)  or  docker stop (SIGTERM)
+  └─ shutdown() → disconnectRedis() → process.exit(0)
+```
+
+---
+
+### Step 0: Pre-checks
+
+1. **Redis server is running:** `docker compose up -d`, then `docker ps` shows `redis_course_redis`.
+   - Why: our Node app is only a _client_. With no Redis server, `connect()` fails and the app will not start.
+2. **`docker-compose.yml` has the `redis` service + `redis_data` volume.**
+   - Why the volume: Redis data is saved to it, so data survives container restarts.
+3. **`redis` npm package is installed** (`npm install redis`). It is the library that lets Node talk to Redis.
+4. **`.env` has** `REDIS_URL=redis://localhost:6379`.
+
+---
+
+### Step 1: Create one shared client (`src/redis/client.ts`)
+
+**Why a separate file?**
+
+- All Redis connection code lives in one place. Other files just do `import { redisClient } from '../redis/client'`.
+- Node runs a module only **once** and caches it. However many files import `client.ts`, they all get the **same** `redisClient` → the whole app shares one connection.
+- If we created a new client per request, we would open hundreds of connections. That is slow and wastes Redis resources.
+
+```ts
+import { createClient } from "redis";
+
+const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+
+export const redisClient = createClient({ url: redisUrl });
+```
+
+| Line                            | What it does / why                                                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `process.env.REDIS_URL`         | Reads the address from `.env`, so it can differ per environment (local, Docker, production) without changing code. |
+| `\|\| "redis://localhost:6379"` | Fallback for local dev if the env variable is missing.                                                             |
+| `createClient(...)`             | Only **creates** the client object. It does **not** connect yet; `connectRedis()` does that (Step 3).              |
+
+> ⚠️ **`.env` must be loaded before `client.ts` runs**, because `client.ts` reads `process.env.REDIS_URL` the moment it is imported.
+>
+> **The trap:** all `import`s in a file run _before_ the rest of its code. So this does NOT work reliably:
+>
+> ```ts
+> import dotenv from "dotenv";
+> import { connectRedis } from "./redis/client"; // ← client.ts runs HERE, .env not loaded yet
+> dotenv.config(); // ← too late for client.ts
+> ```
+>
+> `REDIS_URL` would be `undefined`, and the fallback `localhost` URL is used **silently**. Locally you won't notice, but in Docker/production Redis is somewhere else, so the app fails to connect.
+>
+> **The fix (used in `server.ts`):** make this the **very first import**:
+>
+> ```ts
+> import "dotenv/config"; // loads .env immediately, as a side effect of importing it
+> ```
+>
+> Imports run top to bottom, so `.env` is loaded before `app`, `db/pool` or `redis/client` are imported. Every file after it can safely read `process.env`.
+
+---
+
+### Step 2: Listen to client events
+
+The client sends **events** as its connection status changes. We listen to them so the terminal shows what is happening.
+
+```ts
+redisClient.on("connect", () => console.log("Redis connection established."));
+redisClient.on("ready", () => console.log("Redis client is ready."));
+redisClient.on("error", (error) => console.log("Redis client error.", error));
+redisClient.on("end", () => console.log("Redis client is closed."));
+```
+
+| Event     | When it fires                                           | What it tells us      |
+| --------- | ------------------------------------------------------- | --------------------- |
+| `connect` | Network (TCP) connection to Redis is open               | Redis is reachable    |
+| `ready`   | Client finished its setup and can accept commands       | Safe to use Redis now |
+| `error`   | Something went wrong (Redis down, connection lost, ...) |
+| `end`     | Connection is closed (after `close()`)                  | Shutdown was clean    |
+
+Normal startup output:
+
+```
+Redis connection established.
+Redis client is ready.
+```
+
+---
+
+### Step 3: `connectRedis()`
+
+```ts
+export const connectRedis = async (): Promise<void> => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+};
+```
+
+- **Why a function instead of connecting directly inside `client.ts`?** We decide _when_ to connect (in `startServer`, before `app.listen`). We can also `await` it and catch the error if it fails.
+- **Why `await`?** Connecting takes time. `await` waits until it is done, or throws if Redis is unreachable.
+- **Why check `isOpen`?** Calling `connect()` on a client that is already open throws an error. The check makes the function safe to call more than once.
+
+---
+
+### Step 4: `disconnectRedis()`
+
+```ts
+export const disconnectRedis = async (): Promise<void> => {
+  if (redisClient.isOpen) {
+    await redisClient.close();
+  }
+};
+```
+
+- **Why close at all?** An open connection keeps the Node process alive. Closing politely also frees that connection on the Redis server.
+- **`close()`** lets pending commands finish, then closes. (`destroy()` closes immediately and drops pending commands.)
+- **Why check `isOpen`?** Closing an already-closed client throws an error.
+
+---
+
+### Step 5: Use them in `src/server.ts` (entry file)
+
+```ts
+import "dotenv/config"; // 0. FIRST line: load .env before anything else
+import app from "./app";
+import { testConnection } from "./db/pool";
+import { connectRedis, disconnectRedis } from "./redis/client";
+
+const PORT = process.env.PORT || 5000;
+
+async function startServer() {
+  try {
+    await testConnection(); // 1. Postgres OK?
+    await connectRedis(); // 2. Redis OK?
+
+    app.listen(PORT, () => {
+      // 3. only now accept requests
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+    process.exit(1); // 1 = exit with failure
+  }
+}
+
+const shutdown = async () => {
+  await disconnectRedis(); // close Redis cleanly
+  process.exit(0); // 0 = exit with success
+};
+
+process.on("SIGINT", shutdown); // Ctrl+C in terminal
+process.on("SIGTERM", shutdown); // docker stop / hosting platforms
+
+startServer();
+```
+
+**Why connect before `app.listen()`?**
+
+- The server should take requests only once its databases are ready. If it started listening first, the first requests could hit Redis before it is connected and fail.
+
+**Why `process.exit(1)` in `catch`?**
+
+- "Fail fast": if Postgres or Redis is not reachable, crash loudly at startup instead of running half-broken. Exit code `1` tells Docker, nodemon, etc. that something failed.
+
+**Why the `shutdown` handler? (graceful shutdown)**
+
+- A **signal** is the operating system telling the process "please stop". By default Node just dies immediately, without closing connections.
+- Our handler changes that to: close Redis cleanly → then exit with code `0` (success). You will see `Redis client is closed.` in the terminal.
+
+**Why both `SIGINT` and `SIGTERM`?** Different things stop the app with different signals:
+
+| Signal    | Who sends it                                                   |
+| --------- | -------------------------------------------------------------- |
+| `SIGINT`  | You, pressing **Ctrl+C** in the terminal (local dev)           |
+| `SIGTERM` | `docker stop`, Kubernetes, most hosting platforms (production) |
+
+- Only `SIGINT` → clean shutdown locally, but not in Docker/production.
+- Only `SIGTERM` → clean shutdown in production, but Ctrl+C kills the app without closing Redis.
+- So one `shutdown` function is attached to **both**.
+
+> 💡 Possible improvement for later: only Redis is closed right now. The Postgres pool (`pool.end()`) could be closed inside the same `shutdown` function.
+
+---
+
+### Step 6: Use Redis anywhere in the app
+
+```ts
+import { redisClient } from "../redis/client";
+
+await redisClient.set("greeting", "hello");
+const value = await redisClient.get("greeting"); // 'hello'
+```
+
+No need to connect again: `server.ts` already connected this same client at startup.
+
+---
+
+### Recap
+
+| What we did                            | Why                                                  |
+| -------------------------------------- | ---------------------------------------------------- |
+| One client in `src/redis/client.ts`    | Whole app shares a single connection                 |
+| `import "dotenv/config"` as first line | `.env` is loaded before any file reads `process.env` |
+| URL from `REDIS_URL`                   | Change the Redis location without changing code      |
+| `error` listener                       | Without it, any Redis error crashes the server       |
+| `connect` / `ready` / `end` logs       | See the connection status in the terminal            |
+| `connectRedis()` with `isOpen` check   | Connect at the right time, safe to call twice        |
+| Connect **before** `app.listen()`      | Never serve requests before Redis is ready           |
+| `process.exit(1)` on startup failure   | Fail fast instead of running half-broken             |
+| `shutdown()` on `SIGINT` + `SIGTERM`   | Close Redis cleanly on Ctrl+C and on `docker stop`   |
+
+## How Redis caching works
+
+### What is caching?
+
+**Caching** = keeping a **copy** of data in a fast place (Redis, in RAM) so the next request can read it quickly, instead of asking the slow source (PostgreSQL, an external API, a heavy calculation) again.
+
+- The database is still the **source of truth**. The cache only holds a copy.
+- A cached copy can be **deleted at any time** (expiry, memory full, restart). The app must still work if the cache is empty.
+
+### Why cache?
+
+- **Faster responses:** reading a key from RAM takes well under a millisecond. A DB query can take tens or hundreds of milliseconds.
+- **Less database load:** if 1000 users ask for the same product list, the DB runs the query once instead of 1000 times.
+- **Less repeated work:** expensive results (joins, aggregations, API calls) are computed once and reused.
+
+### What is good to cache?
+
+| Good to cache ✅                                                | Not a good fit ❌                                                       |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Read often, changes rarely (product list, categories, settings) | Changes on almost every request                                         |
+| Expensive to compute (reports, joins, API responses)            | Must always be 100% up to date (account balance, stock during checkout) |
+| Same result for many users                                      | Unique per request and never asked again                                |
+
+---
+
+### Cache hit and cache miss
+
+- **Cache HIT:** the data is already in Redis → return it immediately. Fast. 🎉
+- **Cache MISS:** the data is not in Redis → read it from the DB (slow) → save it in Redis for next time.
+  - Why can it be missing? It was never cached yet, its TTL expired, it was deleted on purpose (invalidation), or Redis removed it because memory was full.
+
+> **Hit ratio** = hits / (hits + misses). A higher hit ratio means the cache is doing its job. The first request is always a miss.
+
+---
+
+### Cache-aside pattern (Lazy loading)
+
+The most common caching pattern, and the one used in our example.
+
+```
+Request
+  │
+  ▼
+Check Redis ──── found? ──YES──▶ return cached data          (HIT)
+  │
+  NO
+  ▼
+Read from DB ──▶ save copy in Redis (with TTL) ──▶ return data  (MISS)
+```
+
+- **"Aside"** → the cache sits _beside_ the app, not between the app and DB. The **app** talks to both. Redis never talks to the database by itself.
+- **"Lazy"** → data goes into the cache only when someone asks for it. Nothing is loaded in advance.
+
+**Why use it?**
+
+- Simple to write and understand.
+- Only data that is actually requested gets cached → no wasted memory.
+- If Redis goes down, the app can still read from the DB (just slower).
+
+**Downside:** the first request (and every request after expiry) is slow. And the cache can hold **old (stale) data** if the DB changes. TTL and invalidation fix this (see below).
+
+---
+
+### TTL: why every cache key should expire
+
+`setEx(key, seconds, value)` = `SET` + `EXPIRE` in one atomic step.
+
+- **Why:** without a TTL, a cached copy stays forever. If the DB changes, users keep seeing old data.
+- With a TTL, the worst case is "data is at most N seconds old". After that, the key is deleted and the next request is a miss that loads fresh data.
+- Choosing N: short (seconds) for data that changes often; long (minutes/hours) for data that rarely changes. It is a trade-off between **freshness** and **speed / DB load**.
+
+---
+
+### Stale cache problem
+
+**Stale** = old. The cache holds a copy taken at some moment. If the DB changes after that, the copy is **out of date**, but Redis doesn't know about it.
+
+```
+10:00  DB    = [Laptop, Keyboard, Mouse, HDD]
+10:00  Cache = [Laptop, Keyboard, Mouse, HDD]            ← copy saved (TTL 60s)
+10:01  DB    = [Laptop, Keyboard, Mouse, HDD, Desktop]   ← new product added
+10:01  Cache = [Laptop, Keyboard, Mouse, HDD]            ← still old! Users don't see "Desktop"
+```
+
+**Why does it happen?** In cache-aside, the cache and the DB are two separate stores. Redis never talks to the DB, so when the DB changes, nobody tells Redis.
+
+**Why is it a problem?** Users see wrong data: a product that doesn't show up, an old price, a deleted item that is still listed.
+
+**Two ways to fix it:**
+
+1. **TTL** → the old copy is removed automatically after N seconds. Users may still see old data **until** it expires.
+2. **Cache invalidation** → delete the key as soon as the DB changes. Users get fresh data on the very next request. ✅
+
+---
+
+### Cache invalidation: keeping the cache correct
+
+**Invalidation** = removing the cached copy because it is no longer correct.
+
+When data **changes** in the DB (create / update / delete), the cached copy becomes wrong. Fix: **delete the cache key** right after writing to the DB.
+
+```
+DB changes ──▶ DEL cache key ──▶ next request: MISS ──▶ read fresh data from DB ──▶ save new copy
+```
+
+```ts
+// Update product in DB, then remove the old cached copy
+await pool.query("UPDATE products SET price = $1 WHERE id = $2", [price, id]);
+await redisClient.del("demo:products"); // next GET is a MISS → loads fresh data
+```
+
+- **Why delete instead of updating the cache?** Simpler and safer: the next read rebuilds the cache from the DB (the source of truth). No risk of writing the wrong value into the cache.
+- **Order:** write to the **DB first**, then delete the cache key.
+- TTL is the **safety net**: if an invalidation is ever missed, the stale data still disappears after the TTL.
+
+---
+
+### Storing objects: JSON
+
+Redis strings store **text**, not JS objects/arrays.
+
+- Saving → `JSON.stringify(products)` → `'["Laptop","Keyboard","Mouse","HDD"]'`
+- Reading → `JSON.parse(cached)` → back to an array.
+- Without `JSON.stringify`, the client cannot send an array as a value, and you would lose its structure.
+
+---
+
+### Cache key naming
+
+- Use namespaced keys: `products:all`, `product:42`, `user:7:orders`.
+- If the result depends on input (id, page, filter), put that input **in the key**: `products:page:2`, `products:category:books`. Otherwise different requests would share the same wrong cached value.
+
+---
+
+### Example (`exmples/redis-caching.ts`)
+
+Run: `npm run example:redis-caching`
+
+```ts
+import "dotenv/config";
+import { createClient } from "redis";
+
+const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+
+const redisClient = createClient({ url: redisUrl });
+
+const cacheKey = "demo:products";
+const cacheTtlSeconds = 60; // Cache will expire after 60 seconds
+
+let dbProducts = ["Laptop", "Keyboard", "Mouse", "HDD"]; // pretend this is the database (let: we change it later)
+
+const run = async () => {
+  await redisClient.connect();
+
+  // 1. Check the cache first
+  let cached = await redisClient.get(cacheKey); // string, or null if the key is missing
+
+  // Cache-aside pattern
+  if (cached) {
+    console.log("Cache HIT"); // 2a. found → use cached copy
+    console.log("data: ", JSON.parse(cached)); //     text → array
+  } else {
+    console.log("Cache MISS"); // 2b. not found
+
+    const products = dbProducts; //     read from main DB (slow in real life)
+
+    // save a copy in Redis for 60s (stringify: Redis stores text)
+    await redisClient.setEx(
+      cacheKey,
+      cacheTtlSeconds,
+      JSON.stringify(products),
+    );
+
+    console.log("data: ", products); //     return data on a MISS too
+  }
+
+  // 3. Stale cache problem: the DB changes, but the cache still has the old copy
+  dbProducts = ["Laptop", "Keyboard", "Mouse", "HDD", "Desktop"]; // "Desktop" added in DB
+  console.log("dbProducts: ", dbProducts);
+
+  cached = await redisClient.get(cacheKey);
+  console.log("cached data:", JSON.parse(cached!)); // still 4 items → STALE
+  // `!` tells TypeScript "this is not null" (we just saved it above)
+
+  // 4. Cache invalidation: when the DB changes, delete the old cache
+  await redisClient.del(cacheKey);
+  console.log("Cache deleted");
+
+  // 5. Next read is a MISS → load fresh data from DB and cache it again
+  cached = await redisClient.get(cacheKey); // null
+
+  if (!cached) {
+    const freshData = dbProducts;
+    await redisClient.setEx(
+      cacheKey,
+      cacheTtlSeconds,
+      JSON.stringify(freshData),
+    );
+    console.log("Fresh Data: ", freshData);
+  }
+
+  await redisClient.close();
+};
+
+run().catch((error) => {
+  console.error("Demo failed: ", error);
+  process.exit(1);
+});
+```
+
+Output (first run, cache empty):
+
+```
+Cache MISS
+data:  [ 'Laptop', 'Keyboard', 'Mouse', 'HDD' ]                  ← read from DB, saved in cache
+dbProducts:  [ 'Laptop', 'Keyboard', 'Mouse', 'HDD', 'Desktop' ] ← DB changed
+cached data: [ 'Laptop', 'Keyboard', 'Mouse', 'HDD' ]            ← cache is STALE (no Desktop)
+Cache deleted                                                    ← invalidation
+Fresh Data:  [ 'Laptop', 'Keyboard', 'Mouse', 'HDD', 'Desktop' ] ← cache rebuilt from DB
+```
+
+Check it in the Redis CLI:
+
+```
+GET demo:products     → "[\"Laptop\",\"Keyboard\",\"Mouse\",\"HDD\",\"Desktop\"]"
+TTL demo:products     → 42   (seconds left)
+```
+
+> ⚠️ **Running it again within 60s:** the first check is a **HIT**, and the cache already has the 5-item list (saved at the end of the last run). So "cached data" equals "dbProducts", and the stale problem is not visible. To see it again, wait 60s or run `DEL demo:products` in the CLI first.
+
+> 💡 The data is printed on **both** a HIT and a MISS. In a real app the user must always get the data; only the place it comes from changes. Also, `redisClient.get()` returns `null` when the key is missing (not `undefined`).
+
+> 💡 In this demo the "DB" is just a variable in the same script. In a real app, invalidation happens in the code that **writes** to the DB (create/update/delete product), not in the code that reads.
+
+---
+
+### Cache-aside as a reusable function (how it looks in a real app)
+
+```ts
+const getProducts = async () => {
+  const cacheKey = "products:all";
+
+  // 1. Try the cache
+  const cached = await redisClient.get(cacheKey);
+  if (cached) return JSON.parse(cached); // HIT
+
+  // 2. MISS → read from DB
+  const result = await pool.query("SELECT * FROM products");
+  const products = result.rows;
+
+  // 3. Save a copy for next time
+  await redisClient.setEx(cacheKey, 60, JSON.stringify(products));
+
+  return products; // return data on MISS too
+};
+```
+
+**Make Redis optional, not required:** if Redis is down, the request should still work using the DB. Wrap cache calls in `try/catch` and fall back to the DB instead of failing the whole request.
+
+---
+
+### Other caching patterns (for awareness)
+
+| Pattern                        | How it works                                                | When to use                                             |
+| ------------------------------ | ----------------------------------------------------------- | ------------------------------------------------------- |
+| **Cache-aside** (lazy loading) | App checks cache → on miss reads DB and fills cache         | Default choice for read-heavy data                      |
+| **Write-through**              | Every write goes to DB **and** cache at the same time       | Cache is always fresh, but writes are slower            |
+| **Write-behind** (write-back)  | Write to cache first, DB is updated later in the background | Very fast writes, but data can be lost if cache crashes |
+
+---
+
+### Common problems
+
+| Problem                | What happens                                                           | Simple fix                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **Stale data**         | Cache shows old data after DB changed                                  | Delete key on update + use TTL                                                                                   |
+| **Cache stampede**     | Popular key expires → many requests miss at once → all hit DB together | Add a little random extra time to TTLs, or let only one request rebuild the cache                                |
+| **Memory full**        | Redis RAM is limited                                                   | Always set TTLs; configure `maxmemory` + an eviction policy like `allkeys-lru` (remove least recently used keys) |
+| **Caching everything** | Wasted memory, more stale data                                         | Cache only hot, expensive, rarely-changing data                                                                  |
+
+---
+
+### Recap
+
+| Concept                             | Why                                         |
+| ----------------------------------- | ------------------------------------------- |
+| Cache = copy in RAM                 | Faster reads, less DB load                  |
+| Cache-aside                         | App checks cache first, fills it on a miss  |
+| HIT / MISS                          | Found in cache / must read from DB          |
+| TTL (`setEx`)                       | Old copies expire automatically             |
+| Stale cache                         | DB changed but cache still has the old copy |
+| Invalidation (`del` after DB write) | Users don't see stale data                  |
+| `JSON.stringify` / `JSON.parse`     | Redis stores text, not objects              |
+| Input in the cache key              | Different requests don't share wrong data   |
+| Fallback to DB                      | App still works if Redis is down            |
+
+## Caching in the real app (`src/services/product.service.ts`)
+
+The demo above used a fake "DB" variable. Now the same ideas run inside the real Express + PostgreSQL product API.
+
+### Where does the caching code live?
+
+```
+Request ──▶ routes (product.routes.ts) ──▶ controller (product.controller.ts) ──▶ service (product.service.ts)
+                                                                                    │
+                                                                         ┌──────────┴──────────┐
+                                                                       Redis               PostgreSQL
+                                                                  (fast copy)          (source of truth)
+```
+
+| Layer          | Job                                        | Knows about Redis?    |
+| -------------- | ------------------------------------------ | --------------------- |
+| **Route**      | Maps URL + method to a controller function | ❌                    |
+| **Controller** | Reads `req`, validates input, sends `res`  | ❌                    |
+| **Service**    | Business logic + data access               | ✅ caching lives here |
+
+**Why the service layer?**
+
+- The controller doesn't care _where_ data comes from. It calls `getProductById(5)` and gets a product, whether it was a HIT or a MISS.
+- All cache reads **and** all cache deletes are in one file. When you add a new write function, the invalidation code is right next to it, so it's harder to forget.
+
+---
+
+### Endpoints and what each one does with Redis
+
+| Endpoint                              | Service function   | Redis action                                    |
+| ------------------------------------- | ------------------ | ----------------------------------------------- |
+| `GET /products`                       | `getAllProducts()` | Read `products:all` (cache-aside)               |
+| `GET /products?category=..&search=..` | `getAllProducts()` | **Skip the cache**, go to DB                    |
+| `GET /products/:id`                   | `getProductById()` | Read `product:id:<id>` (cache-aside)            |
+| `POST /products`                      | `createProduct()`  | Delete `products:all`                           |
+| `PATCH /products/:id`                 | `updateProduct()`  | Delete `product:id:<id>` **and** `products:all` |
+
+---
+
+### Complete code (read this first)
+
+This is the whole `src/services/product.service.ts`. The `STEP` comments match the step headings below, where each part is explained.
+
+```ts
+import { pool } from "../db/pool";
+import { redisClient } from "../redis/client";
+import {
+  Product,
+  ProductRow,
+  CreateProductInput,
+  UpdateProductInput,
+} from "../types/product";
+
+// DB row (snake_case, Date, price as string) → API object (camelCase, plain JSON values)
+// Runs BEFORE caching, so the cached copy and the DB result have the same shape (STEP 4)
+function mapProductRow(row: ProductRow): Product {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    price: Number(row.price),
+    category: row.category,
+    stock: row.stock,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+// ───────────── STEP 1: cache keys + TTL ─────────────
+const PRODUCTS_ALL_CACHE_KEY = "products:all";
+const PRODUCTS_CACHE_TTL_SECONDS = 60;
+
+const getProductCacheKey = (productId: number): string => {
+  return `product:id:${productId}`; // e.g. "product:id:5"
+};
+
+// ───────────── STEP 2: DB-only function (no Redis) ─────────────
+export async function fetchAllProductsFromDatabase(filters: {
+  category?: string;
+  search?: string;
+}): Promise<Product[]> {
+  let query = "SELECT * FROM products WHERE 1=1"; // 1=1 → every filter can start with "AND"
+  const values: string[] = [];
+
+  if (filters.category) {
+    values.push(filters.category);
+    query += ` AND LOWER(category) = LOWER($${values.length})`;
+  }
+
+  if (filters.search) {
+    values.push(`%${filters.search}%`);
+    query += ` AND (LOWER(name) LIKE LOWER($${values.length}) OR LOWER(description) LIKE LOWER($${values.length}))`;
+  }
+
+  query += " ORDER BY id ASC";
+
+  const result = await pool.query<ProductRow>(query, values);
+  return result.rows.map(mapProductRow);
+}
+
+// ───────────── STEP 3: cached list (cache-aside) ─────────────
+export async function getAllProducts(filters: {
+  category?: string;
+  search?: string;
+}): Promise<Product[]> {
+  const hasFilters = Boolean(filters?.category || filters?.search);
+
+  // Filtered lists are NOT cached → go straight to DB
+  if (hasFilters) {
+    console.log("Cache bypass: Filtered product list");
+    return fetchAllProductsFromDatabase(filters);
+  }
+
+  const cachedProducts = await redisClient.get(PRODUCTS_ALL_CACHE_KEY);
+
+  if (cachedProducts) {
+    console.log("Cache hit: products:all");
+    return JSON.parse(cachedProducts) as Product[]; // HIT → text back to array
+  } else {
+    console.log("Cache miss: products:all");
+    const products = await fetchAllProductsFromDatabase(filters); // MISS → DB
+
+    await redisClient.setEx(
+      PRODUCTS_ALL_CACHE_KEY,
+      PRODUCTS_CACHE_TTL_SECONDS,
+      JSON.stringify(products),
+    );
+    console.log("Cache set: products:all");
+
+    return products;
+  }
+}
+
+// ───────────── STEP 2: DB-only function (no Redis) ─────────────
+export async function fetchSingleProduct(id: number): Promise<Product | null> {
+  const result = await pool.query<ProductRow>(
+    "SELECT * FROM products WHERE id = $1",
+    [id],
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  return mapProductRow(result.rows[0]);
+}
+
+// ───────────── STEP 4: cached single product (cache-aside) ─────────────
+export async function getProductById(id: number): Promise<Product | null> {
+  const cacheKey = getProductCacheKey(id);
+
+  const cache = await redisClient.get(cacheKey);
+
+  if (cache) {
+    console.log(`Cache hit: ${cacheKey}`);
+    return JSON.parse(cache); // HIT
+  } else {
+    console.log(`Cache Miss: ${cacheKey}`);
+
+    const product = await fetchSingleProduct(id); // MISS → DB
+
+    if (!product) {
+      return null; // not found → don't cache
+    }
+
+    await redisClient.setEx(
+      cacheKey,
+      PRODUCTS_CACHE_TTL_SECONDS,
+      JSON.stringify(product),
+    );
+    console.log(`Cache set: ${cacheKey}`);
+
+    return product;
+  }
+}
+
+// ───────────── STEP 5: invalidation helper (list) ─────────────
+const deleteAllProductsCache = async (): Promise<void> => {
+  await redisClient.del(PRODUCTS_ALL_CACHE_KEY);
+  console.log(`Cache delete: ${PRODUCTS_ALL_CACHE_KEY}`);
+};
+
+// ───────────── STEP 6: create → invalidate list ─────────────
+export async function createProduct(
+  input: CreateProductInput,
+): Promise<Product> {
+  const result = await pool.query<ProductRow>( // 1. write DB first (STEP 7)
+    `
+    INSERT INTO products (name, description, price, category, stock)
+    VALUES ($1, $2, $3, $4, $5)
+    RETURNING *
+    `,
+    [input.name, input.description, input.price, input.category, input.stock],
+  );
+
+  await deleteAllProductsCache(); // 2. then delete list cache
+
+  return mapProductRow(result.rows[0]);
+}
+
+// ───────────── STEP 5: invalidation helper (single) ─────────────
+const deleteSingleProductCache = async (productId: number): Promise<void> => {
+  const cacheKey = getProductCacheKey(productId);
+  await redisClient.del(cacheKey);
+  console.log(`Cache delete: ${cacheKey}`);
+};
+
+// ───────────── STEP 6: update → invalidate single + list ─────────────
+export async function updateProduct(
+  id: number,
+  input: UpdateProductInput,
+): Promise<Product | null> {
+  const existing = await fetchSingleProduct(id); // fresh row from DB, NOT cache (STEP 2)
+  if (!existing) {
+    return null;
+  }
+
+  // PATCH: fields not sent keep their current value
+  const name = input.name ?? existing.name;
+  const description = input.description ?? existing.description;
+  const price = input.price ?? existing.price;
+  const category = input.category ?? existing.category;
+  const stock = input.stock ?? existing.stock;
+
+  const result = await pool.query<ProductRow>( // 1. write DB first (STEP 7)
+    `
+    UPDATE products
+    SET name = $1,
+        description = $2,
+        price = $3,
+        category = $4,
+        stock = $5,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = $6
+    RETURNING *
+    `,
+    [name, description, price, category, stock, id],
+  );
+
+  await deleteSingleProductCache(id); // 2. delete product:id:<id>
+  await deleteAllProductsCache(); // 3. delete products:all
+
+  return mapProductRow(result.rows[0]);
+}
+```
+
+**Flow summary**
+
+```
+GET  /products          → getAllProducts   → Redis "products:all"  → (miss) DB → setEx
+GET  /products?search=… → getAllProducts   → DB only (bypass)
+GET  /products/:id      → getProductById   → Redis "product:id:N"  → (miss) DB → setEx
+POST /products          → createProduct    → DB INSERT → DEL products:all
+PATCH /products/:id     → updateProduct    → DB SELECT → DB UPDATE → DEL product:id:N + products:all
+```
+
+---
+
+### Step 1: Constants and the key builder
+
+```ts
+const PRODUCTS_ALL_CACHE_KEY = "products:all";
+const PRODUCTS_CACHE_TTL_SECONDS = 60;
+
+const getProductCacheKey = (productId: number): string => {
+  return `product:id:${productId}`;
+};
+```
+
+- **Why constants?** The same key is used to **read** (in `getAllProducts`) and to **delete** (in `deleteAllProductsCache`). With one constant, a typo can't make the read use `products:all` and the delete use `product:all`. That kind of typo is a silent bug: the delete removes nothing and users see stale data.
+- **Why a function for the single-product key?** The key depends on the id. One function = one place that decides the key format. Reads and deletes always build the exact same string.
+- **Why `product:id:5` and not just `5`?** Namespacing. Later, Redis will also hold rate-limit counters, sessions, queues… `5` alone could mean anything.
+- **One TTL for both** keeps it simple. In real apps you can use different TTLs (e.g. list = 60s, single product = 5 min).
+
+---
+
+### Step 2: Separate "DB only" functions from "cached" functions
+
+```
+getAllProducts()   ──(miss)──▶ fetchAllProductsFromDatabase()   ← only SQL, no Redis
+getProductById()   ──(miss)──▶ fetchSingleProduct()             ← only SQL, no Redis
+```
+
+**Why split them?**
+
+- The cached function = "check Redis → otherwise call the DB function → save".
+- The DB function = "just run the SQL". It can be reused anywhere you **must** have fresh data.
+- Example: `updateProduct()` calls `fetchSingleProduct()` directly, **not** `getProductById()`.
+  - **Why?** Before writing, you want the real current row from the source of truth. If you read the cached copy, you might merge the update with old values (e.g. an old price that was already changed).
+
+> 💡 Rule: **reads for users may come from the cache. Reads that are used to make a write should come from the DB.**
+
+---
+
+### Step 3: `getAllProducts()`: list cache + bypass for filters
+
+```ts
+export async function getAllProducts(filters: {
+  category?: string;
+  search?: string;
+}): Promise<Product[]> {
+  const hasFilters = Boolean(filters?.category || filters?.search);
+
+  if (hasFilters) {
+    console.log("Cache bypass: Filtered product list");
+    return fetchAllProductsFromDatabase(filters); // 1. filtered → always DB
+  }
+
+  const cachedProducts = await redisClient.get(PRODUCTS_ALL_CACHE_KEY);
+
+  if (cachedProducts) {
+    console.log("Cache hit: products:all");
+    return JSON.parse(cachedProducts) as Product[]; // 2. HIT → return copy
+  } else {
+    console.log("Cache miss: products:all");
+    const products = await fetchAllProductsFromDatabase(filters); // 3. MISS → DB
+
+    await redisClient.setEx(
+      PRODUCTS_ALL_CACHE_KEY,
+      PRODUCTS_CACHE_TTL_SECONDS,
+      JSON.stringify(products),
+    );
+    console.log("Cache set: products:all");
+
+    return products;
+  }
+}
+```
+
+**Why bypass the cache when filters are used?**
+
+The result depends on the filter. If every request used the key `products:all`:
+
+```
+GET /products?category=books    → MISS → caches ONLY books under "products:all"
+GET /products                   → HIT  → returns only books ❌ wrong data!
+```
+
+To cache filtered results, the filter must be part of the key:
+
+```
+products:all
+products:all:category:books
+products:all:search:keyboard
+products:all:category:books:search:harry
+...  (one key per combination → can be many keys)
+```
+
+That causes two problems:
+
+1. **Many keys:** users can type any search text → endless combinations, most of them never asked twice → low hit ratio, wasted memory.
+2. **Hard invalidation:** when a product changes, which filtered keys are now wrong? You don't know, so you'd have to delete **all** `products:all:*` keys.
+
+So the simple choice here: **cache only the most common request (no filters), send filtered requests straight to the DB.** That's a valid, real-world trade-off: cache the "hot path", not everything.
+
+> 💡 If you later want to cache filters, normalize the input first (`category.toLowerCase().trim()`), so `Books` and ` books` share one key. See "Invalidating many keys at once" below.
+
+---
+
+### Step 4: `getProductById()`: one key per product
+
+```ts
+export async function getProductById(id: number): Promise<Product | null> {
+  const cacheKey = getProductCacheKey(id); // "product:id:5"
+  const cache = await redisClient.get(cacheKey);
+
+  if (cache) {
+    console.log(`Cache hit: ${cacheKey}`);
+    return JSON.parse(cache);
+  } else {
+    console.log(`Cache Miss: ${cacheKey}`);
+    const product = await fetchSingleProduct(id);
+
+    if (!product) {
+      return null; // not found → nothing cached
+    }
+
+    await redisClient.setEx(
+      cacheKey,
+      PRODUCTS_CACHE_TTL_SECONDS,
+      JSON.stringify(product),
+    );
+    console.log(`Cache set: ${cacheKey}`);
+    return product;
+  }
+}
+```
+
+- **Why one key per product, not one big "all products" object?** A request for product 5 only reads product 5. And when product 5 changes, only `product:id:5` is deleted. Products 1–4 stay cached.
+- **Why `return null` before `setEx`?** If the product doesn't exist, there's nothing to cache. `JSON.stringify(null)` would store `"null"`. Then the next `get` returns the string `"null"`, which is truthy, so it would count as a "HIT" and return `null`. It would work by accident, but it is confusing. Not caching "not found" keeps it clear.
+  - Trade-off: someone requesting a non-existing id again and again hits the DB every time. See **cache penetration** below.
+- **Why JSON is safe here:** `mapProductRow()` already turns `created_at` (a `Date`) into an ISO **string** and `price` into a **number** _before_ caching. So the object from the cache (`JSON.parse`) looks exactly like the one from the DB.
+
+> ⚠️ **JSON and `Date`:** `JSON.stringify(new Date())` → a string. `JSON.parse` does **not** turn it back into a `Date`. If you cache raw DB rows with `Date` fields, a HIT gives you strings and a MISS gives you `Date` objects, so the same function returns different types. Map to plain JSON-friendly values **before** caching, as this code does.
+
+---
+
+### Step 5: Invalidation helpers
+
+```ts
+const deleteAllProductsCache = async (): Promise<void> => {
+  await redisClient.del(PRODUCTS_ALL_CACHE_KEY);
+  console.log(`Cache delete: ${PRODUCTS_ALL_CACHE_KEY}`);
+};
+
+const deleteSingleProductCache = async (productId: number): Promise<void> => {
+  const cacheKey = getProductCacheKey(productId);
+  await redisClient.del(cacheKey);
+  console.log(`Cache delete: ${cacheKey}`);
+};
+```
+
+- `DEL` on a key that doesn't exist is fine. It just returns `0`, no error. So you can always delete safely without checking `EXISTS` first.
+- Small helpers = the invalidation logic has a name. `updateProduct` reads like a sentence: "update DB, delete single cache, delete list cache".
+
+---
+
+### Step 6: Which write must delete which key? (the most important part)
+
+Ask for every write: **"Which cached copies contain the data I just changed?"** Delete exactly those.
+
+| Write                                | `products:all` (list) | `product:id:<id>` (single) | Why                                                                                   |
+| ------------------------------------ | --------------------- | -------------------------- | ------------------------------------------------------------------------------------- |
+| **Create** product                   | 🗑 delete             | — leave                    | The list is now missing the new product. No single key exists yet for a brand-new id. |
+| **Update** product                   | 🗑 delete             | 🗑 delete                  | The product is inside the list **and** has its own key. Both copies are old.          |
+| **Delete** product _(not built yet)_ | 🗑 delete             | 🗑 delete                  | Otherwise the deleted product still shows up from the cache for up to 60s.            |
+
+**`createProduct()`**
+
+```ts
+const result = await pool.query(`INSERT INTO products ... RETURNING *`, [...])  // 1. DB first
+await deleteAllProductsCache()                                                  // 2. then cache
+return mapProductRow(result.rows[0])
+```
+
+**`updateProduct()`**
+
+```ts
+const existing = await fetchSingleProduct(id)          // fresh row from DB (not cache)
+if (!existing) return null                             // 404 → nothing changed → nothing to invalidate
+
+// ?? keeps the old value for fields not sent in the PATCH body
+const name = input.name ?? existing.name
+...
+const result = await pool.query(`UPDATE products SET ... WHERE id = $6 RETURNING *`, [...])
+
+await deleteSingleProductCache(id)                     // product:id:<id>
+await deleteAllProductsCache()                         // products:all
+return mapProductRow(result.rows[0])
+```
+
+> ⚠️ **Easy bug to make:** deleting only the single key on update. Then `GET /products/5` shows the new price, but `GET /products` still shows the old price for 60s. **One piece of data can live in many cache keys.** Invalidate all of them.
+
+> 💡 When you add `DELETE /products/:id`, copy the update pattern: delete from DB, then `deleteSingleProductCache(id)` + `deleteAllProductsCache()`.
+
+---
+
+### Step 7: Why "DB first, then delete cache" (and not the other way round)
+
+**❌ Delete cache first, then write DB:**
+
+```
+1. Writer:  DEL product:id:5
+2. Reader:  GET product:id:5 → MISS → reads DB → gets OLD price (DB not updated yet)
+3. Reader:  SETEX product:id:5 (OLD price)          ← stale copy saved again
+4. Writer:  UPDATE products SET price = NEW
+→ cache has the OLD price until TTL expires
+```
+
+The gap between step 1 and 4 is relatively large (a whole DB query), so this goes wrong easily.
+
+**✅ Write DB first, then delete cache** (what our code does):
+
+```
+1. Writer:  UPDATE products SET price = NEW
+2. Writer:  DEL product:id:5
+3. Reader:  MISS → reads DB → NEW price → caches it ✅
+```
+
+**Is it 100% safe?** Almost. One rare race is still possible:
+
+```
+1. Reader:  MISS → reads DB → gets OLD price ... (slow)
+2. Writer:  UPDATE DB → DEL cache
+3. Reader:  SETEX with OLD price                    ← stale again
+```
+
+This needs the reader to be slower than a whole write + delete, so it is rare. The **TTL** is the safety net: the stale copy dies after 60s anyway. This is why you **always** set a TTL, even when you also invalidate.
+
+**What if the DB write succeeds but `DEL` fails** (Redis briefly down)? The error goes to the error middleware, but the DB already changed. The cache stays stale until the TTL. Again: TTL = safety net.
+
+---
+
+### Step 8: Try it yourself
+
+Terminal 1, watch every command Redis receives:
+
+```bash
+docker exec -it redis_course_redis redis-cli MONITOR
+```
+
+Terminal 2:
+
+```bash
+npm run dev
+
+curl localhost:5000/products            # Cache miss: products:all → Cache set
+curl localhost:5000/products            # Cache hit: products:all
+curl "localhost:5000/products?category=accessories"   # Cache bypass
+
+curl localhost:5000/products/1          # Cache Miss: product:id:1 → Cache set
+curl localhost:5000/products/1          # Cache hit: product:id:1
+
+curl -X PATCH localhost:5000/products/1 \
+  -H "Content-Type: application/json" -d '{"price": 999}'
+                                        # Cache delete: product:id:1
+                                        # Cache delete: products:all
+
+curl localhost:5000/products/1          # Cache Miss → fresh price 999 ✅
+```
+
+Inspect keys in `redis-cli`:
+
+```
+KEYS product*            → "products:all", "product:id:1"   (dev only, see warning below)
+TTL product:id:1         → 54
+GET product:id:1         → "{\"id\":1,\"name\":...,\"price\":999,...}"
+```
+
+---
+
+## Extra caching concepts (not in the code yet, but important)
+
+### 1. Redis should not take the app down (graceful fallback)
+
+Right now, if Redis is down, `redisClient.get()` throws → the request fails with 500, even though PostgreSQL is fine.
+
+The cache is an **optimization**, so a cache error should mean "slower", not "broken":
+
+```ts
+async function getCache(key: string): Promise<string | null> {
+  try {
+    return await redisClient.get(key);
+  } catch (error) {
+    console.error(`Cache read failed for ${key}`, error);
+    return null; // behave like a MISS → app falls back to DB
+  }
+}
+```
+
+Do the same for `setEx` (ignore failure, data is already returned) and `del` (log it; TTL will clean up).
+
+### 2. A reusable cache-aside helper
+
+`getAllProducts` and `getProductById` repeat the same steps. That can be pulled into one function:
+
+```ts
+async function getOrSetCache<T>(
+  key: string,
+  ttl: number,
+  fetchFn: () => Promise<T>,
+): Promise<T> {
+  const cached = await redisClient.get(key);
+  if (cached) return JSON.parse(cached) as T; // HIT
+
+  const fresh = await fetchFn(); // MISS
+  if (fresh !== null && fresh !== undefined) {
+    await redisClient.setEx(key, ttl, JSON.stringify(fresh));
+  }
+  return fresh;
+}
+
+// usage
+getOrSetCache(getProductCacheKey(id), 60, () => fetchSingleProduct(id));
+```
+
+### 3. Delete several keys in one round trip
+
+`DEL` accepts many keys. One network call instead of two:
+
+```ts
+await redisClient.del([getProductCacheKey(id), PRODUCTS_ALL_CACHE_KEY]);
+```
+
+### 4. Invalidating many keys at once (when you cache filtered lists)
+
+If you cache `products:all:category:books`, `products:all:search:mouse`, … you need to delete them all on any product change.
+
+| Option                       | How                                                                                                                  | Note                                                                                                     |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `KEYS products:all*` + `DEL` | Find all matching keys                                                                                               | ❌ **Never in production.** `KEYS` scans every key and **blocks** Redis (single-threaded) while it runs. |
+| `SCAN` + `DEL`               | Walks keys in small batches                                                                                          | ✅ Doesn't block Redis.                                                                                  |
+| **Tracking Set**             | When caching a filtered key, also `SADD products:list-keys <key>`. On invalidation, `SMEMBERS` → `DEL` all + the set | ✅ No scanning                                                                                           |
+| **Version in the key**       | Store `products:version = 7`; keys look like `products:v7:category:books`. On change: `INCR products:version`        | ✅ One command invalidates everything; old keys just expire via TTL                                      |
+
+```ts
+// SCAN version (node-redis v5+ yields batches of keys)
+for await (const keys of redisClient.scanIterator({
+  MATCH: "products:all*",
+  COUNT: 100,
+})) {
+  if (keys.length) await redisClient.del(keys);
+}
+```
+
+### 5. Cache problems with names (interview favourites)
+
+| Problem                        | What happens                                                                                                                               | Fix                                                                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| **Cache penetration**          | Requests for data that **doesn't exist** (e.g. `/products/999999`) are never cached → every request hits the DB. Attackers can abuse this. | Cache "not found" for a short time (**negative caching**, e.g. store `"__NULL__"` for 30s), validate ids early, rate limit. |
+| **Cache stampede / breakdown** | One **hot** key (`products:all`) expires → 1000 requests miss at the same moment → 1000 identical DB queries.                              | A lock so only one request rebuilds (`SET lock:key 1 NX EX 5`), others wait/retry; or refresh before expiry.                |
+| **Cache avalanche**            | **Many** keys expire at the same time (e.g. all cached at startup with TTL 60) → DB gets flooded.                                          | Add random **jitter** to TTL: `60 + Math.floor(Math.random() * 30)`.                                                        |
+| **Stale data**                 | Cache doesn't match DB                                                                                                                     | Invalidate on write + TTL (done ✅).                                                                                        |
+
+**Negative caching sketch:**
+
+```ts
+const NOT_FOUND = "__NULL__";
+if (cache === NOT_FOUND) return null; // cached "not found"
+if (!product) {
+  await redisClient.setEx(cacheKey, 30, NOT_FOUND); // short TTL
+  return null;
+}
+```
+
+> Then `createProduct` must also delete that key if a product with that id is created later. With auto-increment ids that rarely matters, but it's another reason to keep the "not found" TTL short.
+
+### 6. Delete-on-write vs update-on-write
+
+Our code **deletes** the cache on write (cache-aside invalidation). The alternative is to **write the new value** into the cache right after the DB update (**write-through** style):
+
+```ts
+await redisClient.setEx(
+  getProductCacheKey(id),
+  60,
+  JSON.stringify(updatedProduct),
+);
+```
+
+|                  | Delete on write ✅ (ours) | Update on write                                                         |
+| ---------------- | ------------------------- | ----------------------------------------------------------------------- |
+| Next read        | MISS (one DB query)       | HIT                                                                     |
+| Risk             | Very low                  | Two writers at the same time can leave the **older** value in the cache |
+| Works for lists? | Yes, just delete          | Hard: you'd have to rebuild/patch the whole list                        |
+
+Deleting is the safer default. Update-on-write is an optimization for very hot single keys.
+
+### 7. Be careful what you cache
+
+- `stock` is inside the cached product. For **showing** a product, a 60s-old stock number is fine. For **checkout** ("is it still in stock?"), always read the DB (or use atomic Redis counters like `DECR`), never the cache.
+- Never cache per-user private data under a shared key (e.g. `cart` instead of `cart:user:7`). One user would see another user's data.
+
+### 8. Measure it
+
+- Log HIT / MISS (done ✅). In production you'd count them (metrics) to see the **hit ratio**.
+- `redis-cli INFO stats` → `keyspace_hits` and `keyspace_misses` for the whole Redis server.
+- Compare response time of a MISS vs a HIT to see the gain.
+
+---
+
+### Complete improved version (all extras together)
+
+The same `product.service.ts`, rewritten with the improvements above. **Not in the project yet**: use it as a reference if you want to upgrade your code.
+
+What changed compared to the current code:
+| # | Change | Concept |
+|---|---|---|
+| 1 | `safeGet` / `safeSetEx` / `safeDel` wrap Redis in `try/catch` | Redis down → app still works (fallback) |
+| 2 | `getOrSetCache()` holds the cache-aside steps once | Reusable helper, no repeated code |
+| 3 | `ttlWithJitter()` adds 0–14 random seconds | Prevents cache avalanche |
+| 4 | `invalidateProductCache()` deletes both keys in one `DEL` | One round trip |
+| 5 | New `deleteProduct()` | Delete also invalidates list + single |
+
+## Example
+
+```ts
+import { pool } from "../db/pool";
+import { redisClient } from "../redis/client";
+import {
+  Product,
+  ProductRow,
+  CreateProductInput,
+  UpdateProductInput,
+} from "../types/product";
+
+function mapProductRow(row: ProductRow): Product {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    price: Number(row.price),
+    category: row.category,
+    stock: row.stock,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+// ───────────── Cache keys + TTL ─────────────
+const PRODUCTS_ALL_CACHE_KEY = "products:all";
+const PRODUCTS_CACHE_TTL_SECONDS = 60;
+
+const getProductCacheKey = (productId: number): string =>
+  `product:id:${productId}`;
+
+// 60–74s, so keys cached at the same moment don't all expire together (avalanche)
+const ttlWithJitter = (): number =>
+  PRODUCTS_CACHE_TTL_SECONDS + Math.floor(Math.random() * 15);
+
+// ───────────── Safe Redis wrappers: a Redis error never fails the request ─────────────
+async function safeGet(key: string): Promise<string | null> {
+  try {
+    return await redisClient.get(key);
+  } catch (error) {
+    console.error(`Cache read failed: ${key}`, error);
+    return null; // treat as MISS → DB
+  }
+}
+
+async function safeSetEx(
+  key: string,
+  ttl: number,
+  value: string,
+): Promise<void> {
+  try {
+    await redisClient.setEx(key, ttl, value);
+  } catch (error) {
+    console.error(`Cache write failed: ${key}`, error); // data is still returned to user
+  }
+}
+
+async function safeDel(keys: string[]): Promise<void> {
+  try {
+    await redisClient.del(keys); // many keys, one command
+    console.log(`Cache delete: ${keys.join(", ")}`);
+  } catch (error) {
+    console.error(`Cache delete failed: ${keys.join(", ")}`, error); // TTL cleans up later
+  }
+}
+
+// ───────────── Reusable cache-aside helper ─────────────
+async function getOrSetCache<T>(
+  key: string,
+  fetchFn: () => Promise<T>,
+): Promise<T> {
+  const cached = await safeGet(key);
+
+  if (cached) {
+    console.log(`Cache hit: ${key}`);
+    return JSON.parse(cached) as T;
+  }
+
+  console.log(`Cache miss: ${key}`);
+  const fresh = await fetchFn();
+
+  if (fresh !== null && fresh !== undefined) {
+    // don't cache "not found"
+    await safeSetEx(key, ttlWithJitter(), JSON.stringify(fresh));
+    console.log(`Cache set: ${key}`);
+  }
+
+  return fresh;
+}
+
+// ───────────── Invalidation ─────────────
+// Pass an id when one product changed (update/delete); no id for create
+async function invalidateProductCache(productId?: number): Promise<void> {
+  const keys = [PRODUCTS_ALL_CACHE_KEY];
+  if (productId !== undefined) keys.push(getProductCacheKey(productId));
+  await safeDel(keys);
+}
+
+// ───────────── DB-only functions ─────────────
+export async function fetchAllProductsFromDatabase(filters: {
+  category?: string;
+  search?: string;
+}): Promise<Product[]> {
+  let query = "SELECT * FROM products WHERE 1=1";
+  const values: string[] = [];
+
+  if (filters.category) {
+    values.push(filters.category);
+    query += ` AND LOWER(category) = LOWER($${values.length})`;
+  }
+
+  if (filters.search) {
+    values.push(`%${filters.search}%`);
+    query += ` AND (LOWER(name) LIKE LOWER($${values.length}) OR LOWER(description) LIKE LOWER($${values.length}))`;
+  }
+
+  query += " ORDER BY id ASC";
+
+  const result = await pool.query<ProductRow>(query, values);
+  return result.rows.map(mapProductRow);
+}
+
+export async function fetchSingleProduct(id: number): Promise<Product | null> {
+  const result = await pool.query<ProductRow>(
+    "SELECT * FROM products WHERE id = $1",
+    [id],
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  return mapProductRow(result.rows[0]);
+}
+
+// ───────────── Reads (cached) ─────────────
+export async function getAllProducts(filters: {
+  category?: string;
+  search?: string;
+}): Promise<Product[]> {
+  if (filters?.category || filters?.search) {
+    console.log("Cache bypass: Filtered product list");
+    return fetchAllProductsFromDatabase(filters);
+  }
+
+  return getOrSetCache(PRODUCTS_ALL_CACHE_KEY, () =>
+    fetchAllProductsFromDatabase({}),
+  );
+}
+
+export async function getProductById(id: number): Promise<Product | null> {
+  return getOrSetCache(getProductCacheKey(id), () => fetchSingleProduct(id));
+}
+
+// ───────────── Writes (DB first, then invalidate) ─────────────
+export async function createProduct(
+  input: CreateProductInput,
+): Promise<Product> {
+  const result = await pool.query<ProductRow>(
+    `
+    INSERT INTO products (name, description, price, category, stock)
+    VALUES ($1, $2, $3, $4, $5)
+    RETURNING *
+    `,
+    [input.name, input.description, input.price, input.category, input.stock],
+  );
+
+  await invalidateProductCache(); // list only
+
+  return mapProductRow(result.rows[0]);
+}
+
+export async function updateProduct(
+  id: number,
+  input: UpdateProductInput,
+): Promise<Product | null> {
+  const existing = await fetchSingleProduct(id); // DB, not cache
+  if (!existing) {
+    return null;
+  }
+
+  const name = input.name ?? existing.name;
+  const description = input.description ?? existing.description;
+  const price = input.price ?? existing.price;
+  const category = input.category ?? existing.category;
+  const stock = input.stock ?? existing.stock;
+
+  const result = await pool.query<ProductRow>(
+    `
+    UPDATE products
+    SET name = $1,
+        description = $2,
+        price = $3,
+        category = $4,
+        stock = $5,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = $6
+    RETURNING *
+    `,
+    [name, description, price, category, stock, id],
+  );
+
+  await invalidateProductCache(id); // list + single
+
+  return mapProductRow(result.rows[0]);
+}
+
+export async function deleteProduct(id: number): Promise<boolean> {
+  const result = await pool.query("DELETE FROM products WHERE id = $1", [id]);
+
+  if (result.rowCount === 0) {
+    return false; // nothing deleted → nothing to invalidate
+  }
+
+  await invalidateProductCache(id); // list + single
+
+  return true;
+}
+```
+
+To use `deleteProduct`, you would also add a controller function and the route `router.delete("/:id", productController.deleteProduct)`.
+
+> 💡 Negative caching (caching "not found") is left out here to keep `getOrSetCache` simple. See point 5 above if you want to add it.
+
+---
+
+### Recap: caching in the product API
+
+| Concept                                | In our code                                                                                |
+| -------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Caching lives in the **service layer** | `product.service.ts`; controllers don't know Redis exists                                  |
+| Key constants + key builder            | `PRODUCTS_ALL_CACHE_KEY`, `getProductCacheKey(id)` → read & delete always use the same key |
+| DB-only functions                      | `fetchAllProductsFromDatabase`, `fetchSingleProduct`, reused for writes (fresh data)       |
+| Cache the hot path only                | No-filter list is cached; filtered lists bypass the cache                                  |
+| Per-item keys                          | `product:id:<id>` → change one product, delete one key                                     |
+| Don't cache "not found"                | `return null` before `setEx`                                                               |
+| Map before caching                     | Dates become strings before `JSON.stringify`, so HIT and MISS return the same shape        |
+| Invalidate every copy                  | Create → list; Update/Delete → list **+** single                                           |
+| Order                                  | DB write first, then `DEL`                                                                 |
+| TTL always                             | Safety net for races and failed deletes                                                    |
+| Fallback (to add)                      | Redis error → treat as MISS, read DB                                                       |
+
+## Rate Limit Using Redis
+
+### 1. What is rate limiting?
+
+Rate limiting **restricts how many requests a client can make to an API within a time period**.
+
+Examples of limits:
+| Limit | Typical use |
+|---|---|
+| 5 requests / minute / IP address | Public read endpoints |
+| 100 requests / hour / logged-in user | Authenticated APIs |
+| 3 login attempts / minute / account | Login, OTP, password reset |
+
+When a client goes over its limit, the server rejects the extra requests with **HTTP `429 Too Many Requests`**.
+
+**Why do we need it?**
+
+- Protect the API from too much traffic (traffic spikes, buggy clients, bots).
+- Make brute-force attacks (password guessing, OTP guessing) slower and harder.
+- Stop accidental or intentional API abuse (scraping, spam).
+- Control resource usage: protect expensive DB queries and paid third-party API calls.
+- Keep the app stable for everyone. One noisy client should not slow down other users.
+
+---
+
+### 2. Why use Redis for rate limiting?
+
+Suppose we store the counters in a plain JavaScript object:
+
+```ts
+const requestCounts: Record<string, number> = {};
+```
+
+Problems with this:
+| Problem | What happens |
+|---|---|
+| Lost on restart | Counters disappear when the Node.js process restarts or redeploys |
+| Not shared | Each app instance keeps its **own** counters |
+| No expiry | You must write your own timers / cleanup code to reset counters |
+| Memory leak risk | Old IPs stay in the object forever unless you clean them up |
+
+Redis solves all of these. It is a **shared, in-memory store** with **atomic counters** (`INCR`) and **automatic expiry** (`EXPIRE`).
+
+**Example: multiple app instances behind a load balancer**
+
+```
+                       ┌──────────▶ Server A ──┐
+Client ──▶ Load balancer ───────▶ Server B ───┼──▶ Redis   rateLimit:products:1.2.3.4 = 4
+                       └──────────▶ Server C ──┘          (one shared counter)
+```
+
+- **Without a shared store:** each server allows 5 requests, so a limit of 5 really becomes **15** (5 × 3 servers).
+- **With Redis:** all servers increment the **same key**, so the limit is really 5. This works as long as all servers use the same key format and the same limits.
+
+---
+
+### 3. How it works: the fixed-window counter
+
+Our implementation uses the **fixed-window counter** algorithm.
+
+```ts
+const RATE_LIMIT_WINDOW_SECONDS = 60;
+const RATE_LIMIT_MAX_REQUESTS = 5;
+```
+
+→ Each client IP can make **up to 5 requests in a 60-second window**.
+
+**Request lifecycle**
+
+1. A request reaches the Express server.
+2. The middleware finds the client's IP address.
+3. It builds a unique Redis key: `rateLimit:products:<ip>`.
+4. Redis increments the counter for that key (`INCR`).
+5. If this is the **first** request of the window (count = 1), it sets a 60s expiry (`EXPIRE`).
+6. The middleware checks the count.
+7. Count **> 5** → respond with `429`. Otherwise → call `next()` and the request goes to the controller.
+8. After 60 seconds Redis deletes the key automatically, and the next request starts a new window at 1.
+
+**Flow diagram**
+
+```
+Incoming Request
+       │
+       ▼
+Identify Client IP
+       │
+       ▼
+Construct Redis Key  →  rateLimit:products:<ip>
+       │
+       ▼
+INCR counter
+       │
+       ▼
+First request? (count === 1)
+   ┌───┴────┐
+  Yes       No
+   │        │
+   ▼        │
+EXPIRE 60s  │
+   └───┬────┘
+       ▼
+Set X-RateLimit-* headers
+       │
+   ┌───┴──────────┐
+count <= 5     count > 5
+   │              │
+   ▼              ▼
+ next()        HTTP 429
+   │
+   ▼
+Controller
+```
+
+**Timeline example (limit = 5, window = 60s)**
+| Time | Request # | Redis value | TTL | Result |
+|---|---|---|---|---|
+| 0s | 1 | 1 | set to 60 | ✅ allowed |
+| 5s | 2 | 2 | 55 | ✅ allowed |
+| 10s–20s | 3, 4, 5 | 3, 4, 5 | 50 → 40 | ✅ allowed |
+| 25s | 6 | 6 | 35 | ❌ 429 |
+| 60s | (key expires) | gone | | |
+| 61s | 7 | 1 (new window) | set to 60 | ✅ allowed |
+
+> 💡 Blocked requests still run `INCR`. The counter keeps going up (6, 7, 8…), but this is harmless: the TTL was set only once, so the key still expires on time.
+
+---
+
+### 4. Our code (`src/middleware/rateLimit.middleware.ts`)
+
+```ts
+import { Request, Response, NextFunction } from "express";
+import { redisClient } from "../redis/client";
+
+const RATE_LIMIT_WINDOW_SECONDS = 60;
+const RATE_LIMIT_MAX_REQUESTS = 5;
+
+// Product reads should stay available if Redis is down (fail-open).
+// For login / OTP / payments, set this to false (fail-closed).
+const FAIL_OPEN = true;
+
+export const productRateLimiter = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  // Each IP gets its own counter, so one user crossing the limit does not block other users.
+  const ip = req.ip ?? req.socket.remoteAddress;
+
+  // Don't fall back to a shared key like "unknown"
+  if (!ip) {
+    return res.status(400).json({
+      success: false,
+      message: "Unable to identify client.",
+    });
+  }
+
+  const rateLimiterKey = `rateLimit:products:${ip}`;
+
+  try {
+    const requestCount = await redisClient.incr(rateLimiterKey);
+
+    // After 60 seconds, Redis deletes the key and counting starts fresh
+    if (requestCount === 1) {
+      await redisClient.expire(rateLimiterKey, RATE_LIMIT_WINDOW_SECONDS);
+    }
+
+    // Seconds left in the current window
+    const ttl = await redisClient.ttl(rateLimiterKey);
+    const secondsUntilReset = Math.max(0, ttl);
+
+    res.setHeader("X-RateLimit-Limit", RATE_LIMIT_MAX_REQUESTS);
+    res.setHeader(
+      "X-RateLimit-Remaining",
+      Math.max(0, RATE_LIMIT_MAX_REQUESTS - requestCount),
+    );
+    res.setHeader("X-RateLimit-Reset", secondsUntilReset);
+
+    if (requestCount > RATE_LIMIT_MAX_REQUESTS) {
+      res.setHeader("Retry-After", secondsUntilReset);
+      return res.status(429).json({
+        success: false,
+        message: `Too many requests. Try again in ${secondsUntilReset} seconds.`,
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error("Rate limit redis error", error);
+
+    if (FAIL_OPEN) {
+      return next();
+    }
+
+    next(error);
+  }
+};
+```
+
+> 💡 The file also contains a commented-out Lua version of the `INCR` / `EXPIRE` / `TTL` part. See section 8.
+
+**Line by line**
+| Code | Why |
+|---|---|
+| `req.ip ?? req.socket.remoteAddress` | `req.ip` is Express's client IP (respects the `trust proxy` setting). The socket address is a fallback. |
+| `if (!ip) → 400` | Without an IP, every such request would share the key `rateLimit:products:undefined`. Reject instead. |
+| `` `rateLimit:products:${ip}` `` | Namespaced key: _feature_ : _scope_ : _client_. You can add `rateLimit:login:<ip>` later without collisions. |
+| `redisClient.incr(key)` | Atomic +1. If the key doesn't exist, Redis treats it as `0` and returns `1`. |
+| `if (requestCount === 1) expire(...)` | Set the TTL **only once**, at the start of the window. If we set it on every request, the window would keep moving forward and an active client would never be reset. |
+| `redisClient.ttl(key)` | Seconds left in the window. `Math.max(0, …)` guards against the `-1` / `-2` special values. |
+| `X-RateLimit-Limit` / `-Remaining` / `-Reset` | Tell the client its limit, how many requests are left, and when the window resets. `Math.max(0, …)` prevents negative numbers after the limit. |
+| `Retry-After` + `return res.status(429)…` | Tells the blocked client how long to wait. `return` stops the function, so `next()` is never called and the controller never runs. |
+| `catch → FAIL_OPEN ? next() : next(error)` | Redis failure → either let the request through (fail-open) or forward to `errorMiddleware` → `500` (fail-closed). See section 9. |
+
+---
+
+### 5. Using the middleware in routes (`src/routes/product.routes.ts`)
+
+There are two ways to apply it:
+
+```ts
+// Option A: rate limit ALL routes in this router
+router.use(productRateLimiter);
+router.get("/", productController.getProducts);
+router.get("/:id", productController.getProductById);
+
+// Option B: rate limit ONE route only
+router.get("/", productRateLimiter, productController.getProducts);
+router.get("/:id", productController.getProductById);
+```
+
+> ⚠️ **Use one option, not both.** If `router.use(productRateLimiter)` **and** `router.get("/", productRateLimiter, …)` are both present, `GET /products` runs the middleware **twice**, so `INCR` runs twice per request. The client gets blocked after about **3** requests instead of 5, and `X-RateLimit-Remaining` jumps by 2.
+
+**Where to put it?**
+
+- Before the controller, so blocked requests never touch the DB or the cache.
+- After `express.json()` is fine. Rate limiting doesn't need the body, so you can also put it earlier to skip body parsing for blocked requests.
+
+---
+
+### 6. Redis commands used
+
+| Command              | What it does                                                               | In our code                           |
+| -------------------- | -------------------------------------------------------------------------- | ------------------------------------- |
+| `INCR key`           | Atomically adds 1 to an integer. Missing key → starts at 0 → returns 1.    | Count the request                     |
+| `EXPIRE key seconds` | Gives a key a time-to-live (TTL). Redis deletes it when the TTL ends.      | Reset the window after 60s            |
+| `TTL key`            | Remaining lifetime in seconds. `-1` = no expiry, `-2` = key doesn't exist. | `X-RateLimit-Reset` and `Retry-After` |
+
+**Why is `INCR` atomic important?**
+Two requests arrive at the same moment on two servers. With "GET the value → add 1 in JS → SET", both could read `4` and both write `5`, so one request is lost. `INCR` runs inside Redis as one step, so the results are always `5` and `6`.
+
+**Try it in `redis-cli`**
+
+```bash
+INCR rateLimit:products:1.2.3.4        # (integer) 1
+EXPIRE rateLimit:products:1.2.3.4 60   # (integer) 1
+INCR rateLimit:products:1.2.3.4        # (integer) 2
+TTL rateLimit:products:1.2.3.4         # (integer) 54
+GET rateLimit:products:1.2.3.4         # "2"
+KEYS rateLimit:*                       # list all limiter keys (use SCAN in production)
+DEL rateLimit:products:1.2.3.4         # reset a client manually
+```
+
+---
+
+### 7. Redis key design
+
+```ts
+const rateLimiterKey = `rateLimit:products:${ip}`;
+```
+
+- **One counter per client per policy.** Different IPs → different keys → one user hitting the limit doesn't block others.
+- **Put the policy name in the key** (`products`, `login`, `otp`) so each endpoint can have its own limit.
+- Other key ideas: `rateLimit:login:user:<userId>`, `rateLimit:api:apiKey:<key>`.
+
+**Getting the real client IP**
+
+- `req.ip` is the preferred source. `req.socket.remoteAddress` is a fallback.
+- Behind a reverse proxy / load balancer (Nginx, AWS ALB, Render, Heroku…), `req.ip` is the **proxy's** IP unless you configure `trust proxy`. Then **all users share one counter**, and one user can block everybody.
+  ```ts
+  // app.ts: trust exactly one proxy hop in front of the app
+  app.set("trust proxy", 1);
+  ```
+- ⚠️ Don't use `app.set("trust proxy", true)` or read `X-Forwarded-For` yourself unless you control the proxy. A client can send a fake `X-Forwarded-For` header and get a new "IP" (and a new limit) on every request.
+- If `ip` is `undefined`, the key becomes `rateLimit:products:undefined`, and all those requests share one counter. Don't use a shared fallback like `"unknown"`. Reject the request or use another identifier.
+
+---
+
+### 8. Improvement (optional): make INCR + EXPIRE atomic with a Lua script
+
+**The problem:** `INCR` and `EXPIRE` are **two separate calls** from Node to Redis.
+
+```
+INCR  → 1   ✅
+EXPIRE      ❌ (Node crashes / network error in between)
+```
+
+The key now has **no TTL**. The counter never resets, and that IP stays **blocked** until someone deletes the key. This is rare, but possible.
+
+**The fix:** Redis can run a small **Lua script** (with the `EVAL` command) that does `INCR` + `EXPIRE` + `TTL` inside Redis.
+
+**Why it is better**
+
+- **Atomic:** Redis runs the whole script as one unit, so nothing can happen in between and it can't be left half-done. No key is ever left without a TTL.
+- **Faster:** 1 network round trip instead of 3 (`INCR`, `EXPIRE`, `TTL`).
+- **Same result:** the script returns `[requestCount, ttl]`, so the rest of the middleware stays the same.
+
+> 💡 Our middleware keeps a **commented-out** Lua version for reference. The plain `INCR` + `EXPIRE` version is easier to read and is fine while learning.
+> Redis only runs **Lua** scripts (not JS or SQL). The JS alternative without Lua is a `MULTI` transaction with `EXPIRE key 60 NX` (Redis 7+).
+
+---
+
+### 9. Redis failure handling: fail-open vs fail-closed
+
+Redis can go down (network problem, connection lost, server restart). Our code chooses with the `FAIL_OPEN` flag:
+
+```ts
+catch (error) {
+  console.error("Rate limit redis error", error);
+
+  if (FAIL_OPEN) {
+    return next();       // fail-open: request continues to the controller
+  }
+
+  next(error);           // fail-closed: → errorMiddleware → 500
+}
+```
+
+| Strategy        | What happens when Redis is down | ✅ Advantage                | ❌ Disadvantage                    | Good for                                |
+| --------------- | ------------------------------- | --------------------------- | ---------------------------------- | --------------------------------------- |
+| **Fail-closed** | Reject / error the request      | Protection is never skipped | Redis outage = API outage          | Login, OTP, payments, expensive ops     |
+| **Fail-open**   | Let the request through         | App stays available         | No rate limiting during the outage | Normal public reads (e.g. product list) |
+
+**Fail-open version**
+
+```ts
+catch (error) {
+  console.error("Rate limit redis error, allowing request", error);
+  next();                // no error → request continues to the controller
+}
+```
+
+> 💡 Pick a policy **per endpoint** and write it down. Log or monitor these errors so an outage doesn't go unnoticed.
+> Note: node-redis queues commands while reconnecting, so a request may **wait** instead of failing fast. Consider a timeout or checking `redisClient.isReady` before calling Redis.
+
+---
+
+### 10. Reusable limiter factory (different limits per route)
+
+Our middleware has the key prefix and limits hard-coded. To use different limits on different routes, wrap the same logic in a function:
+
+```ts
+export const createRateLimiter =
+  (name: string, maxRequests: number, windowSeconds: number) =>
+  async (req: Request, res: Response, next: NextFunction) => {
+    const key = `rateLimit:${name}:${req.ip}`;
+    // ...same logic as productRateLimiter, using maxRequests and windowSeconds
+  };
+
+router.get(
+  "/",
+  createRateLimiter("products:read", 100, 60),
+  productController.getProducts,
+);
+router.post(
+  "/",
+  createRateLimiter("products:write", 10, 60),
+  productController.createProduct,
+);
+```
+
+---
+
+### 11. Try it yourself
+
+```bash
+# Send 7 requests: the first 5 return 200, then 429
+for i in {1..7}; do
+  curl -s -o /dev/null -w "Request $i → %{http_code}\n" http://localhost:3000/products
+done
+
+# See the headers
+curl -i http://localhost:3000/products
+# X-RateLimit-Limit: 5
+# X-RateLimit-Remaining: 4
+```
+
+Then in `redis-cli`:
+
+```bash
+KEYS rateLimit:*                    # find your key (e.g. rateLimit:products:::1 for localhost IPv6)
+GET  "rateLimit:products:::1"       # current count
+TTL  "rateLimit:products:::1"       # seconds until reset
+```
+
+> 💡 On localhost, `req.ip` is often `::1` (IPv6) or `::ffff:127.0.0.1`, so the key looks a bit odd. This is expected.
+
+**Test concurrency:** send many requests at the same time (e.g. `npx autocannon -c 20 -a 20 http://localhost:3000/products`). Exactly 5 should succeed. If more get through, there is a race in your logic.
+
+---
+
+### 12. Fixed window vs sliding window vs token bucket
+
+| Algorithm                  | How it works                                                      | ✅ Advantages                            | ❌ Limitations                    | Redis tools                                     |
+| -------------------------- | ----------------------------------------------------------------- | ---------------------------------------- | --------------------------------- | ----------------------------------------------- |
+| **Fixed window**           | Count requests in a fixed period (0–60s, 60–120s…)                | Simple, fast, 1 key per client           | Bursts at window edges            | `INCR` + `EXPIRE`                               |
+| **Sliding window log**     | Store a timestamp per request, count the ones in the last 60s     | Exact, smooth                            | More memory (1 entry per request) | Sorted set: `ZADD`, `ZREMRANGEBYSCORE`, `ZCARD` |
+| **Sliding window counter** | Weighted mix of the current and previous fixed windows            | Smooth, cheap                            | Approximate                       | 2 counters                                      |
+| **Token bucket**           | Bucket refills tokens at a steady rate, each request uses 1 token | Allows controlled bursts, smooth average | More config, needs Lua            | Hash (`tokens`, `lastRefill`) + Lua             |
+
+**The fixed-window boundary problem**
+
+```
+Limit = 5 / minute
+        window 1 (0–60s)        │        window 2 (60–120s)
+                     ●●●●● (59s)│(61s) ●●●●●
+                                │
+            10 requests in ~2 seconds, and all are allowed!
+```
+
+A client can send up to **2× the limit** in a short burst around the boundary. For most APIs this is acceptable. For strict limits, use a sliding window or token bucket.
+
+**Sliding window log (idea)**
+
+```ts
+const now = Date.now();
+const key = `rateLimit:sliding:${ip}`;
+
+await redisClient
+  .multi()
+  .zRemRangeByScore(key, 0, now - WINDOW_MS) // drop entries older than the window
+  .zAdd(key, { score: now, value: `${now}-${Math.random()}` })
+  .zCard(key) // how many in the last WINDOW_MS
+  .pExpire(key, WINDOW_MS)
+  .exec();
+```
+
+---
+
+### 13. Response headers
+
+| Header                  | Meaning                                                                          |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `X-RateLimit-Limit`     | Max requests in the window                                                       |
+| `X-RateLimit-Remaining` | Requests left in the current window                                              |
+| `X-RateLimit-Reset`     | Seconds (or a timestamp) until the window resets                                 |
+| `Retry-After`           | Sent with `429`: how many seconds to wait before retrying (standard HTTP header) |
+
+> 💡 The newer IETF draft uses `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (no `X-` prefix). Libraries like `express-rate-limit` can send either style.
+> If you call the API from a browser on another origin, add these headers to CORS `exposedHeaders` so frontend JS can read them.
+
+---
+
+### 14. Production best practices
+
+| Practice                              | Why                                                                                                                      |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **Use atomic operations**             | Lua script / `MULTI` so a counter is never left without a TTL                                                            |
+| **Configure `trust proxy` correctly** | `req.ip` must be the real client, not the load balancer or a spoofed header                                              |
+| **No shared fallback key**            | Don't put all unknown clients under `"unknown"` / `undefined`                                                            |
+| **Different limits per operation**    | Login, password reset, OTP, and writes need stricter limits than reads                                                   |
+| **Limit by user too**                 | For authenticated APIs, `userId` is more accurate than IP (shared office Wi-Fi, mobile NAT)                              |
+| **Account for IPv6**                  | One user can have many IPv6 addresses. Consider limiting by `/64` subnet                                                 |
+| **Explicit outage policy**            | Choose fail-open or fail-closed per endpoint                                                                             |
+| **Monitor Redis**                     | Memory, availability, errors. Plan for persistence, eviction, and high availability (Sentinel / Cluster / managed Redis) |
+| **Test concurrent requests**          | Make sure parallel requests can't go over the limit                                                                      |
+| **Return useful headers**             | `X-RateLimit-*` and `Retry-After` help well-behaved clients back off                                                     |
+| **Consider a library**                | `express-rate-limit` + `rate-limit-redis`, or `rate-limiter-flexible`, are tested and support more algorithms            |
+| **Don't rely on rate limiting alone** | Still use auth, validation, CAPTCHA, WAF/CDN limits, and monitoring                                                      |
+
+---
+
+### 15. Common interview questions
+
+**Q1. Why use Redis instead of an in-memory JavaScript object?**
+Redis is shared by all app instances, survives app restarts, has atomic `INCR`, and expires keys automatically.
+
+**Q2. Why does `INCR` return 1 when the key doesn't exist?**
+Redis treats a missing key as `0`, increments it, and returns `1`.
+
+**Q3. Why use `EXPIRE`?**
+It deletes the counter automatically when the window ends, so the client starts a new window without any cleanup code. It also keeps Redis memory from growing forever.
+
+**Q4. Why set `EXPIRE` only when the count is 1?**
+If you set it on every request, the TTL resets each time. A client who keeps sending requests would never get a new window (or a slow attacker's window would keep extending).
+
+**Q5. Why is `INCR` followed by `EXPIRE` potentially problematic?**
+They are two separate operations. If `INCR` succeeds but `EXPIRE` never runs (crash, network error), the key has no TTL and the client is blocked forever. A Lua script (or `MULTI`) makes them atomic.
+
+**Q6. Why return HTTP 429?**
+`429 Too Many Requests` is the standard status code for rate limiting. Clients and proxies understand it, and it can include `Retry-After`.
+
+**Q7. Why use the IP address in the key? What are its problems?**
+It gives each client its own counter without needing login. Problems: many users can share one IP (offices, mobile NAT), one user can have many IPs (IPv6, VPNs), and a wrong proxy config can make every request look like it comes from the same IP or let clients spoof it.
+
+**Q8. What happens when the Node.js server restarts?**
+Nothing changes. The counters live in Redis, not in the Node process.
+
+**Q9. Can Redis rate limiting work across multiple Node.js servers?**
+Yes. All servers use the same Redis and the same key format and limits, so they all update one shared counter.
+
+**Q10. Rate limiting vs throttling?**
+Rate limiting **rejects** requests over an allowance (429). Throttling usually **slows down or queues** requests instead of rejecting them. People often use the two words for the same thing.
+
+**Q11. Fixed window vs sliding window?**
+A fixed window resets the counter at fixed times, so bursts are possible at the edges (up to 2× the limit). A sliding window always looks at the last N seconds, which is smoother but costs more memory or computation.
+
+**Q12. What happens if Redis goes down?**
+It depends on the policy. Fail-closed rejects requests (safer). Fail-open lets them through (more available). Choose per endpoint.
+
+**Q13. What happens if the same middleware is applied twice to a route?**
+The counter goes up twice per request, so the real limit becomes about half of the configured limit.
+
+---
+
+### 16. Quick revision
+
+| Term                   | Meaning                                                         |
+| ---------------------- | --------------------------------------------------------------- |
+| **Rate limiting**      | Max N requests per client per time window                       |
+| **Redis**              | Shared in-memory store, one counter for all app instances       |
+| **`INCR`**             | Atomically adds 1 (missing key → 1)                             |
+| **`EXPIRE`**           | Sets a key's lifetime, which resets the window                  |
+| **`TTL`**              | Seconds left before the key expires (`-1` no TTL, `-2` missing) |
+| **`EVAL`**             | Runs a Lua script atomically (`INCR` + `EXPIRE` in one step)    |
+| **Rate-limit key**     | `rateLimit:<policy>:<client>`, unique per client + policy       |
+| **HTTP 429**           | Too Many Requests                                               |
+| **`Retry-After`**      | Tells the client how long to wait                               |
+| **Fixed window**       | Counts in fixed intervals; simple, but bursty at edges          |
+| **Sliding window**     | Rolling interval; smoother, costs more                          |
+| **Token bucket**       | Tokens refill over time; allows controlled bursts               |
+| **Fail-open**          | Redis down → allow the request                                  |
+| **Fail-closed**        | Redis down → reject / error the request                         |
+| **`trust proxy`**      | Makes `req.ip` the real client behind a proxy                   |
+| **Express middleware** | Enforces the limit **before** the controller runs               |
+
+
+## Pub-Sub
+
+- Pub/Sub stands for Publisher–Subscriber. It's a messaging pattern in which one part of your application sends a message, and other parts that are listening receive it.
+
+### Working
+
+- publisher sends a message to a named channel.
+- a named redis channel (such as notifications) broadcasts the Message.
+- Every subscriber currently listening to that channel receives the message.
+  The publisher doesn't need to know who the subscribers are. It simply publishes a message, and Redis distributes it to the subscribers currently listening.
+
+### Need of Redis Pub/Sub
+
+- In a clinic management system, when a patient books an appointment, several things might need to happen:
+  - The notification service informs the doctor.
+  - The dashboard updates the appointment list.
+  - An activity-monitoring service logs the event.
+- Without Pub/Sub, booking API might need to call each service directly.
+- With Pub/Sub, it can publish one event: "appointment:booked"
+- Other services subscribe to that channel and react independently.
+- This reduces direct dependencies between different parts of your application.
+
+### Example
+
+- create two separate files: one publishes messages, and the other subscribes to them.
+- Both Subscriber and Publisher need their own client.
+
+1. Subscribe
+
+  ```ts
+  import "dotenv/config";
+  import { createClient } from "redis";
+
+  const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+
+  const subscriberClient = createClient({ url: redisUrl });
+
+  const channel = "demo:notifications";
+
+  const run = async () => {
+    subscriberClient.on("error", (err) => {
+      console.error("Redis error:", err);
+    });
+
+    // Subscriber must be active before publisher publishes message
+    await subscriberClient.connect();
+
+    console.log("Subscriber connected & listening.");
+
+    await subscriberClient.subscribe(channel, (message) => {
+      try {
+        const data = JSON.parse(message);
+        console.log("Title: ", data.title);
+        console.log("Message: ", data.message);
+      } catch {
+        console.error("Received invalid JSON:", message);
+      }
+    });
+
+    console.log("Listening for notifications...");
+
+    // On Ctrl+C: unsubscribe from the channel, then close the connection
+    process.on("SIGINT", async () => {
+      await subscriberClient.unsubscribe(channel);
+      await subscriberClient.close();
+      console.log("Unsubscribed & disconnected.");
+      process.exit(0);
+    });
+  };
+
+  run().catch((error) => {
+    console.error("Pub-Sub error: ", error);
+  });
+  ```
+
+2. Publish
+
+  ```ts
+  import "dotenv/config";
+  import { createClient } from "redis";
+
+  const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+
+  const publisherClient = createClient({ url: redisUrl });
+
+  const channel = "demo:notifications";
+
+  const event = {
+    title: "Redis Course",
+    message: "Pub-Sub demo",
+  };
+
+  const run = async () => {
+    publisherClient.on("error", (err) => {
+      console.error("Redis error:", err);
+    });
+
+    await publisherClient.connect();
+
+    console.log("Publisher connected to Redis.");
+
+    // PUBLISH returns how many subscribers received the message
+    const receivers = await publisherClient.publish(
+      channel,
+      JSON.stringify(event),
+    );
+
+    console.log(`Message delivered to ${receivers} subscriber(s).`);
+
+    await publisherClient.close();
+  };
+
+  run().catch((error) => {
+    console.error("Pub-Sub error: ", error);
+  });
+  ```
+
+- Run these in separate terminals (start the subscriber first):
+  ```bash
+  npm run example:redis-sub   # terminal 1 -> tsx exmples/redis-sub.ts
+  ```
+  ```bash
+  npm run example:redis-pub   # terminal 2 -> tsx exmples/redis-pub.ts
+  ```
+- Note: plain `node file.ts` does not run TypeScript on Node 22.13 (needs `--experimental-strip-types`), so use `tsx`.
+- Note: the code is wrapped in an `async` function `run()` because top-level `await` works only in ES modules, and this project is CommonJS.
+
+- The subscriber should print:
+  ```text
+  Subscriber connected & listening.
+  Listening for notifications...
+  Title:  Redis Course
+  Message:  Pub-Sub demo
+  ```
+- The publisher should print:
+  ```text
+  Publisher connected to Redis.
+  Message delivered to 1 subscriber(s).
+  ```
+- Press `Ctrl+C` in the subscriber terminal; it unsubscribes and prints `Unsubscribed & disconnected.`
+
+### Important points
+
+- **A subscriber needs its own connection.** Once a client subscribes, it enters subscriber mode and cannot run normal commands like `GET`/`SET`. In an app, create a separate client for it:
+  ```ts
+  const redisClient = createClient({ url: redisUrl }); // normal commands (GET/SET...)
+  const subscriberClient = redisClient.duplicate();    // same config, separate connection
+
+  await redisClient.connect();
+  await subscriberClient.connect();
+  ```
+- **`PUBLISH` returns the number of subscribers that received the message.** `0` means nobody was listening, and the message is lost (it is not stored).
+  ```ts
+  const receivers = await publisherClient.publish(channel, JSON.stringify(event));
+  console.log(`Message delivered to ${receivers} subscriber(s).`); // e.g. 1
+  ```
+- **At-most-once delivery.** No acknowledgement or retry: if a subscriber disconnects, it loses those messages permanently.
+- **Pattern subscriptions.** `PSUBSCRIBE demo:*` subscribes to every matching channel (`demo:notifications`, `demo:alerts`, ...).
+  ```ts
+  await subscriberClient.pSubscribe("demo:*", (message, channel) => {
+    console.log(`[${channel}]`, message);
+  });
+  ```
+
+### Redis Pub-Sub vs Message Queue
+
+| Feature            | Redis Pub/Sub                                 | Message Queue                                          |
+| ------------------ | --------------------------------------------- | ------------------------------------------------------ |
+| Main purpose       | Broadcast messages                            | Deliver work or messages                               |
+| Multiple listeners | All active subscribers receive the message    | Depends on queue and consumer configuration            |
+| Message storage    | No message history                            | Can retain pending messages                            |
+| Offline consumer   | Misses messages                               | Messages can remain available, depending on the system |
+| Best for           | Live updates, events, real-time notifications | Background jobs, reliable processing                   |
+
+- For example, if your subscriber is offline when someone publishes payment:completed, Redis Pub/Sub does not save the event for that subscriber to receive later.
+- For reliable background jobs, you might use BullMQ, which uses Redis, or Redis Streams when you need persisted events and consumer tracking.
+
+### When should you use Pub/Sub in real projects?
+
+- Real-time notifications: Publish an event when a user receives a notification, and let connected services react to it.
+- Live dashboards: Broadcast changes so active dashboards can update their data.
+- Communication between services: Let one service announce an event without needing to know which other services are listening.
+- Live activity feeds: Broadcast events such as a user joining a room or a new item being added.
+
+Redis Pub/Sub alone does not deliver updates directly to a user's browser. For browser notifications, your backend typically combines Pub/Sub with WebSockets or Server-Sent Events.
+
+## Unsubscribe from a channel
+
+- redis-cli:
+  ```bash
+  UNSUBSCRIBE demo:notifications
+  PUNSUBSCRIBE demo:*   # for pattern subscriptions
+  ```
+- node-redis:
+  ```ts
+  await subscriberClient.unsubscribe("demo:notifications");
+  await subscriberClient.pUnsubscribe("demo:*");
+  ```
+- Calling `unsubscribe()` with no arguments unsubscribes from all channels.
+- Only the subscriber unsubscribes. The publisher never subscribed, so it just calls `close()` after publishing.
+- In the example above, the subscriber unsubscribes on `Ctrl+C` (`SIGINT`) before closing the connection, so it shuts down cleanly.
+
+
+## Pub-Sub practical implementation (Notification API)
+
+- Goal: `POST /notifications` publishes a notification to Redis, and a separate subscriber process receives and logs it.
+- Publisher = the Express API (uses the shared `redisClient`).
+- Subscriber = a separate Node process with its **own** Redis client (`npm run subscriber`).
+
+### Flow
+```text
+Client --POST /notifications--> Express API
+                                   |
+                     validate body -> build payload
+                                   |
+                  PUBLISH "notifications" <JSON>   (returns receivers count)
+                                   |
+                                 Redis
+                                   |
+              every active subscriber of "notifications"
+                                   |
+            notification.subscriber.ts -> JSON.parse -> validate shape -> log
+```
+
+### Folder structure
+```text
+src/
+  types/notification.ts            <- NotificationPayload + isNotificationPayload()
+  pubsub/
+    channels.ts                    <- NOTIFICATION_CHANNEL
+    notification.publisher.ts      <- publishNotification()
+    notification.subscriber.ts     <- standalone subscriber process
+  controllers/notification.controller.ts
+  routes/notification.routes.ts
+  routes/index.ts                  <- router.use("/notifications", notificationRoutes)
+```
+- Channel names and payload types live in their **own files**, so the publisher and the subscriber both import from them and never import each other.
+
+### 1. Payload type + runtime validation (`src/types/notification.ts`)
+```ts
+export interface NotificationPayload {
+  id: string;
+  title: string;
+  message: string;
+  createdAt: string;
+}
+
+// JSON.parse() gives no type safety, so check the shape at runtime
+export function isNotificationPayload(value: unknown): value is NotificationPayload {
+  if (typeof value !== "object" || value === null) return false;
+
+  const data = value as Record<string, unknown>;
+
+  return (
+    typeof data.id === "string" &&
+    typeof data.title === "string" &&
+    typeof data.message === "string" &&
+    typeof data.createdAt === "string"
+  );
+}
+```
+- `JSON.parse(message) as NotificationPayload` only tells TypeScript what to expect; it checks nothing at runtime.
+- Anyone can publish to a channel (e.g. `redis-cli PUBLISH notifications hello`), so the subscriber must validate what it receives.
+
+### 2. Channel name (`src/pubsub/channels.ts`)
+```ts
+// Shared by publishers and subscribers.
+// Keep channels here: importing a *.subscriber.ts file would start a subscriber.
+export const NOTIFICATION_CHANNEL = "notifications"
+```
+
+### 3. Publisher (`src/pubsub/notification.publisher.ts`)
+```ts
+import { redisClient } from "../redis/client";
+import { NotificationPayload } from "../types/notification";
+import { NOTIFICATION_CHANNEL } from "./channels";
+
+// Returns how many subscribers received the message (0 = nobody was listening, message is lost)
+export const publishNotification = async(notification: NotificationPayload): Promise<number> => {
+    return redisClient.publish(NOTIFICATION_CHANNEL, JSON.stringify(notification))
+}
+```
+- The publisher reuses the app's normal `redisClient`. Publishing does not put a client into subscriber mode.
+- Redis channels carry strings, so objects are sent with `JSON.stringify()`.
+
+### 4. Controller (`src/controllers/notification.controller.ts`)
+```ts
+const MAX_TITLE_LENGTH = 100;
+const MAX_MESSAGE_LENGTH = 500;
+
+export const publishNotificationController = async(req: Request, res: Response, next: NextFunction) => {
+    try {
+        const {title, message} = req.body;
+
+        if (typeof title !== "string" || title.trim() === "") {
+            return res.status(400).json({
+                success: false,
+                message: "Title is required and must be a non-empty string",
+            });
+        }
+
+        if (title.trim().length > MAX_TITLE_LENGTH) { /* 400 */ }
+        // same two checks for `message` (MAX_MESSAGE_LENGTH)
+
+        const notification: NotificationPayload = {
+            id: randomUUID(),               // from "crypto"; Date.now() can repeat
+            title: title.trim(),
+            message: message.trim(),
+            createdAt: new Date().toISOString()
+        }
+
+        const receivers = await publishNotification(notification)
+
+        // Pub/Sub does not store messages: with 0 receivers the notification is lost
+        if (receivers === 0) {
+            console.warn(`Notification ${notification.id} published, but no subscribers were listening.`)
+        }
+
+        res.status(201).json({
+            success: true,
+            message: 'Notification published successfully!',
+            data: { id: notification.id, receivers }
+        })
+    } catch (error) {
+        next(error);   // never leave catch empty: the request would hang forever
+    }
+}
+```
+
+### 5. Route
+```ts
+// src/routes/notification.routes.ts
+router.post('/', notificationController.publishNotificationController)
+
+// src/routes/index.ts
+router.use("/notifications", notificationRoutes);
+```
+
+### 6. Subscriber process (`src/pubsub/notification.subscriber.ts`)
+```ts
+import "dotenv/config"; // must be first: this file runs as its own process (npm run subscriber)
+import { createClient } from "redis"
+import { isNotificationPayload } from "../types/notification";
+import { NOTIFICATION_CHANNEL } from "./channels";
+
+const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+
+const subscriberClient = createClient({url: redisUrl})
+
+subscriberClient.on('error', (err)=> {
+    console.error('Notification subscriber error: ', err)
+})
+
+const startNotificationSubscriber = async() => {
+    await subscriberClient.connect();
+
+    await subscriberClient.subscribe(NOTIFICATION_CHANNEL, (message) => {
+        try {
+            const notification: unknown = JSON.parse(message)
+
+            if (!isNotificationPayload(notification)) {
+                console.error('Invalid notification payload: ', message)
+                return
+            }
+
+            console.log(`Title: ${notification.title}, \nMessage: ${notification.message} \nCreated At: ${notification.createdAt}`)
+        } catch (error) {
+            console.error('Invalid JSON received: ', message)
+        }
+    })
+
+    console.log(`Subscribed to "${NOTIFICATION_CHANNEL}" channel.`)
+}
+
+// Graceful shutdown: unsubscribe, then close the connection
+const shutdown = async () => {
+    if (subscriberClient.isOpen) {
+        await subscriberClient.unsubscribe(NOTIFICATION_CHANNEL)
+        await subscriberClient.close()
+    }
+    console.log('Notification subscriber stopped.')
+    process.exit(0)
+}
+
+process.on('SIGINT', shutdown);  // Ctrl+C in terminal
+process.on('SIGTERM', shutdown); // docker stop / hosting platforms
+
+startNotificationSubscriber().catch(error => {
+    console.error("Start notification subscriber error", error)
+    process.exit(1)
+})
+```
+- It runs on its own, not through `server.ts`, so it must load `.env` itself (`import "dotenv/config"`). Otherwise `REDIS_URL` is ignored.
+- It uses its own client, because a subscribed connection cannot run normal commands like `GET` or `SET`.
+
+### 7. Script (`package.json`)
+```json
+"subscriber": "tsx watch src/pubsub/notification.subscriber.ts"
+```
+
+### Run and test
+- Terminal 1: `npm run dev` (API server)
+- Terminal 2: `npm run subscriber` (start it before publishing, or messages are missed)
+- Terminal 3:
+  ```bash
+  # valid -> 201
+  curl -X POST http://localhost:5000/notifications \
+    -H "Content-Type: application/json" \
+    -d '{"title":"Hello","message":"Pub-Sub works"}'
+  # {"success":true,"message":"Notification published successfully!","data":{"id":"<uuid>","receivers":1}}
+
+  # invalid -> 400
+  curl -X POST http://localhost:5000/notifications \
+    -H "Content-Type: application/json" -d '{}'
+  # {"success":false,"message":"Title is required and must be a non-empty string"}
+
+  # bad messages straight to Redis -> subscriber logs an error and skips them
+  redis-cli PUBLISH notifications 'not json'
+  redis-cli PUBLISH notifications '{"title":"x"}'
+
+  # how many subscribers are listening right now
+  redis-cli PUBSUB NUMSUB notifications
+  ```
+- Subscriber terminal output:
+  ```text
+  Subscribed to "notifications" channel.
+  Title: Hello,
+  Message: Pub-Sub works
+  Created At: 2026-10-18T08:49:30.000Z
+  ```
+- Stop the subscriber with `Ctrl+C`: it prints `Notification subscriber stopped.`
+- Stop the subscriber, then publish again: the response shows `"receivers":0`, the server logs a warning, and the message is lost.
+
+### Quick revision
+- API = publisher (shared client). Subscriber = separate process with its own client.
+- Keep channel names and payload types in shared files; publisher and subscriber must not import each other.
+- Validate twice: the HTTP body before publishing, and the message shape after `JSON.parse` in the subscriber.
+- `publish()` returns the number of receivers; `0` means the message is gone.
+- Pub/Sub is fire-and-forget: use Redis Streams or BullMQ if notifications must not be lost.
