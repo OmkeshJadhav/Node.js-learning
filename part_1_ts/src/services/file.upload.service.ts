@@ -1,6 +1,8 @@
 import { AppError } from "../errors/AppError"
+import { clearAvatarCache, getAvatarsFromCache, setAvatarCache } from "../lib/avatarsCache"
 import { logger } from "../lib/logger"
 import { clearUserAvatar, findUserAvatar, updateUserAvatar } from "../repositories/file.upload.repository"
+import { Avatar } from "../types/avatar"
 import { deleteImage, uploadImage } from "./cloudinary.service"
 
 export const uploadUserAvatar = async (userId: string, buffer: Buffer) => {
@@ -24,6 +26,9 @@ export const uploadUserAvatar = async (userId: string, buffer: Buffer) => {
         throw error
     }
 
+    // Invalidate the cache
+    await clearAvatarCache(userId)
+
     // 3. Only now delete the old image - failure here shouldn't fail the request
     if (existingUser.avatar_public_id) {
         await deleteImage(existingUser.avatar_public_id).catch((err) =>
@@ -38,6 +43,14 @@ export const uploadUserAvatar = async (userId: string, buffer: Buffer) => {
 }
 
 export const getUserAvatar = async (userId: string) => {
+    // 1. Try the cache first - skips the DB on a hit
+    const cachedAvatar = await getAvatarsFromCache(userId);
+
+    if(cachedAvatar){
+        return cachedAvatar
+    }
+    
+    // 2. Cache miss - read from the DB
     const existingUser = await findUserAvatar(userId)
 
     if (!existingUser) {
@@ -48,6 +61,13 @@ export const getUserAvatar = async (userId: string) => {
     if (!existingUser.avatar_url) {
         return null
     }
+
+    const avatar: Avatar = {
+        imageUrl: existingUser.avatar_url,
+        publicId: existingUser.avatar_public_id,
+    }
+
+    await setAvatarCache(userId, avatar)
 
     return {
         imageUrl: existingUser.avatar_url,
@@ -68,6 +88,10 @@ export const removeUserAvatar = async (userId: string): Promise<void> => {
 
     // 1. Clear the DB first - so the user never points to an image that no longer exists
     await clearUserAvatar(userId)
+
+    // Invalidate the cache
+    await clearAvatarCache(userId)
+
 
     // 2. Then delete from Cloudinary - failure here only leaves an unused image, so just log it
     await deleteImage(existingUser.avatar_public_id).catch((err) =>
