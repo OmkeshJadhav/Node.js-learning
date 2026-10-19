@@ -22,5 +22,6 @@ export const env = {
     jwtAccessExpiresIn: checkRequiredEnvVariables('JWT_ACCESS_EXPIRES_IN'),
     cloudinaryCloudName: checkRequiredEnvVariables('CLOUDINARY_CLOUD_NAME'),
     cloudinaryApiKey: checkRequiredEnvVariables('CLOUDINARY_API_KEY'),
-    cloudinaryApiSecret: checkRequiredEnvVariables('CLOUDINARY_API_SECRET')
+    cloudinaryApiSecret: checkRequiredEnvVariables('CLOUDINARY_API_SECRET'),
+    redisUrl: checkRequiredEnvVariables('REDIS_URL')
 } as const;
