@@ -37,6 +37,24 @@ export const uploadUserAvatar = async (userId: string, buffer: Buffer) => {
     }
 }
 
+export const getUserAvatar = async (userId: string) => {
+    const existingUser = await findUserAvatar(userId)
+
+    if (!existingUser) {
+        throw new AppError(404, "User not found")
+    }
+
+    // No avatar is a normal state (new user / deleted avatar), so return null instead of an error
+    if (!existingUser.avatar_url) {
+        return null
+    }
+
+    return {
+        imageUrl: existingUser.avatar_url,
+        publicId: existingUser.avatar_public_id,
+    }
+}
+
 export const removeUserAvatar = async (userId: string): Promise<void> => {
     const existingUser = await findUserAvatar(userId)
 

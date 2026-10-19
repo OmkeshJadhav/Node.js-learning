@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../middlewares/auth.middleware";
 import { upload } from "../middlewares/fileUpload.middleware";
-import { removeUserAvatar, uploadUserAvatar } from "../services/file.upload.service";
+import { getUserAvatar, removeUserAvatar, uploadUserAvatar } from "../services/file.upload.service";
 import { AppError } from "../errors/AppError";
 
 export const fileUploadRouter = Router();
@@ -17,6 +17,19 @@ fileUploadRouter.post('/image', upload.single("image"), async (req, res, next) =
         const avatar = await uploadUserAvatar(req.user!.userId, req.file.buffer);
 
         res.status(201).json({
+            success: true,
+            data: { avatar },
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+fileUploadRouter.get('/image', async (req, res, next) => {
+    try {
+        const avatar = await getUserAvatar(req.user!.userId);
+
+        res.status(200).json({
             success: true,
             data: { avatar },
         });
