@@ -7285,3 +7285,321 @@ docker exec -it redis_course_redis redis-cli
 - Cache check is the FIRST line of `getUserAvatar`, otherwise the cache is useless.
 - Upload & delete → change DB first, then `clearAvatarCache(userId)`.
 - `redis.ts`: `new Redis(url)` = client, `new URL(url)` = just parsing. BullMQ needs `maxRetriesPerRequest: null`.
+
+
+# BullMQ
+
+## Delete avatar from Cloudinary using a BullMQ job
+
+**Goal:** `DELETE /api/uploads/image` should not wait for Cloudinary. The request only clears the DB + cache and puts a **job** in a Redis queue. A separate **worker** process picks the job up and deletes the image from Cloudinary in the background.
+
+- Why?
+  - The user doesn't need to wait for Cloudinary → faster response.
+  - If Cloudinary is slow or down, the job is **retried automatically** (3 attempts with backoff) instead of the image being left behind.
+  - If the worker is stopped, jobs **wait safely in Redis** and run when it starts again.
+- Postgres is still the source of truth. The Cloudinary delete is "clean-up" work → a good fit for a background job.
+
+### Key words
+
+| Word | Meaning |
+|---|---|
+| **Queue** | A named list of jobs stored in Redis (`delete_cloudinary_image`) |
+| **Job** | One piece of work = a name + data (`{ publicId }`) + options (attempts, backoff...) |
+| **Producer** | Code that ADDS jobs to the queue (runs inside the API) |
+| **Worker** | Code that TAKES jobs from the queue and runs them (runs as its own process) |
+
+### Big picture
+
+```
+API process (npm run dev)                          Worker process (npm run worker)
+─────────────────────────                          ───────────────────────────────
+DELETE /image
+  │
+  ▼
+removeUserAvatar(userId)
+  ├─ clearUserAvatar(userId)        (DB)
+  ├─ clearAvatarCache(userId)       (Redis cache)
+  └─ deleteCloudinaryImageProducer(publicId)
+         │
+         ▼  queue.add(...)
+   ┌──────────────────────────────┐
+   │ Redis: delete_cloudinary_image│ ──── job ────▶  Worker
+   │   { publicId: "..." }        │                    │
+   └──────────────────────────────┘                    ▼
+  │                                                deleteImage(publicId)  (Cloudinary)
+  ▼                                                    │
+200 "Avatar deleted successfully"                      ├─ ok / not found → "completed"
+(response does NOT wait for the worker)                └─ error → retry (max 3) → "failed"
+```
+
+### Files involved and the job of each file
+
+| # | File | Layer | Job |
+|---|---|---|---|
+| 1 | `package.json` | Config | `bullmq` dependency + `"worker"` script to start the worker process |
+| 2 | `src/bullMQ/connection.ts` | Infra | Redis connection options for BullMQ + queue name constant |
+| 3 | `src/bullMQ/producer/deleteCloudinaryImage.producer.ts` | Producer | Creates the Queue ONCE, adds `delete-cloudinary-image` jobs |
+| 4 | `src/bullMQ/worker/deleteCloudinaryImage.worker.ts` | Worker | Takes jobs, calls `deleteImage(publicId)`, logs completed / failed |
+| 5 | `src/services/cloudinary.service.ts` | Service | `deleteImage` now RETURNS Cloudinary's response (`{ result }`) |
+| 6 | `src/services/file.upload.service.ts` | Service (business logic) | `removeUserAvatar` enqueues the job instead of calling Cloudinary directly |
+
+- Route did NOT change. It still calls `removeUserAvatar(userId)`.
+- `bullmqConnection` moved from `src/lib/redis.ts` to `src/bullMQ/connection.ts`. `redis.ts` now only has the cache client.
+
+### Step 1: Install + worker script (`package.json`)
+
+```
+npm install bullmq
+```
+
+```json
+"scripts": {
+    "dev": "tsx watch src/server.ts",
+    "worker": "tsx src/bullMQ/worker/deleteCloudinaryImage.worker.ts"
+}
+```
+
+- The worker is a **separate Node process**, not part of `server.ts`. Run both in two terminals:
+  ```
+  npm run dev      # terminal 1 - API (producer)
+  npm run worker   # terminal 2 - worker
+  ```
+- The worker still gets `.env` values because it imports `config/env.ts` (which calls `dotenv.config()`) and `config/cloudinary.ts` (which sets Cloudinary credentials on import).
+
+### Step 2: Connection + queue name (`src/bullMQ/connection.ts`)
+
+```ts
+import {env} from '../config/env'
+
+const redisUrl = new URL(env.redisUrl)
+
+export const bullmqConnection = {
+    host: redisUrl.hostname,
+    port: Number(redisUrl.port) || 6379,  // URL without a port gives "" -> fall back to the default Redis port
+    maxRetriesPerRequest: null,
+    username: redisUrl.username || undefined,
+    password: redisUrl.password || undefined
+}
+
+export const DELETE_CLOUDINARY_IMAGE_QUEUE = 'delete_cloudinary_image'
+```
+
+- BullMQ takes connection **options** (not our `redis` client) and opens its own connections.
+- `maxRetriesPerRequest: null` → REQUIRED for workers. They wait on Redis with blocking commands for a long time.
+- `Number("") || 6379` → `redis://localhost` has no port → `Number("")` is `0` → fall back to `6379`.
+- `username` / `password` → needed for hosted Redis (`redis://user:pass@host:6379`). Empty string → `undefined` (no auth).
+- **Queue name lives here** (not in the producer). Producer and worker must use the SAME name.
+  - If the worker imported it from the producer file, the worker would also run `new Queue(...)` at import → an extra, unused Redis connection.
+
+### Step 3: Producer (`src/bullMQ/producer/deleteCloudinaryImage.producer.ts`)
+
+```ts
+import { Queue } from "bullmq";
+import { bullmqConnection, DELETE_CLOUDINARY_IMAGE_QUEUE } from "../connection";
+
+// 1. Create the Queue once - every call reuses the same Redis connection
+const deleteCloudinaryImageQueue = new Queue(DELETE_CLOUDINARY_IMAGE_QUEUE, { connection: bullmqConnection });
+
+export const deleteCloudinaryImageProducer = async(publicId: string): Promise<void> => {
+    // 2. Add job to the queue
+    await deleteCloudinaryImageQueue.add(
+        "delete-cloudinary-image",
+        { publicId },
+        {attempts: 3,
+            backoff: {
+                type: "exponential",
+                delay: 1000
+            },
+            removeOnComplete: true,
+            removeOnFail: false
+        }
+    )
+}
+```
+
+- **Queue is created ONCE** at module level (same idea as `new Redis(...)` in `redis.ts`).
+  - ❌ Creating `new Queue()` inside the function + `close()` at the end → opens and closes a Redis connection on EVERY request.
+- `queue.add(name, data, options)`:
+  - `"delete-cloudinary-image"` → job name (shown in logs / dashboards).
+  - `{ publicId }` → job data. Stored in Redis as JSON → only plain data (strings, numbers, objects), no class instances / functions.
+- Options:
+
+| Option | Meaning |
+|---|---|
+| `attempts: 3` | Try max 3 times in total before marking the job as failed |
+| `backoff: exponential, 1000` | Wait between retries: 1s, then 2s (doubles each time) |
+| `removeOnComplete: true` | Delete finished jobs from Redis (no need to keep them) |
+| `removeOnFail: false` | KEEP failed jobs in Redis → we can inspect why they failed |
+
+### Step 4: Worker (`src/bullMQ/worker/deleteCloudinaryImage.worker.ts`)
+
+```ts
+import { Worker } from "bullmq"
+import { bullmqConnection, DELETE_CLOUDINARY_IMAGE_QUEUE } from "../connection"
+import { deleteImage } from "../../services/cloudinary.service"
+
+const deleteCloudinaryImageWorker = () => {
+    const worker = new Worker(DELETE_CLOUDINARY_IMAGE_QUEUE,
+        async (job) => {
+            const { publicId } = job.data;
+
+            const res = await deleteImage(publicId)  // From cloudinary service
+
+            // Cloudinary doesn't throw on failure - it returns a result string.
+            // "not found" means the image is already gone, so retrying won't help.
+            if (res.result !== "ok" && res.result !== "not found") {
+                throw new Error(`Cloudinary delete failed: ${res.result}`)  // triggers a retry
+            }
+
+            // Whatever is returned here shows up as `result` in the "completed" event
+            return { publicId, result: res.result }
+        },
+        {
+            connection: bullmqConnection
+        }
+    )
+    worker.on("completed", (job, result) => {
+        console.log(`Job ${job.id} completed`, result)
+    })
+
+    worker.on('failed', (job, error) => {
+        console.log(`Job ${job?.id} failed`, error.message)
+    })
+
+    console.log(`Worker ${worker.name} is running and waiting for jobs`)
+}
+
+deleteCloudinaryImageWorker()
+```
+
+- `new Worker(queueName, processor, { connection })` → starts listening on the queue immediately.
+- **Processor result decides the job status:**
+  - function finishes normally → job **completed**.
+  - function **throws** → job **failed** for this attempt → retried (if attempts are left).
+- `return { publicId, result }` → becomes `result` in the `completed` event.
+  - With no `return`, the log shows `Job 1 completed undefined`. Not an error, just nothing was returned.
+- Cloudinary `destroy` does **NOT throw** when something is wrong. It returns `{ result: "ok" }` or `{ result: "not found" }`.
+  - So we check `res.result` ourselves and `throw` → this is what turns it into a retry.
+  - `"not found"` = image already gone → treat as success (retrying won't help).
+- `job?.id` in `failed` → `job` can be `undefined` in this event (TS type), so optional chaining.
+- ⚠️ `deleteCloudinaryImageWorker()` must be **called** at the bottom. Only defining the function → `npm run worker` loads the file and exits. Jobs just pile up in Redis.
+
+### Step 5: `deleteImage` returns the result (`src/services/cloudinary.service.ts`)
+
+```ts
+// Returns Cloudinary's response, e.g. { result: "ok" } or { result: "not found" }
+export async function deleteImage(publicId: string): Promise<{ result: string }> {
+    return cloudinary.uploader.destroy(publicId, { resource_type: "image" });
+}
+```
+
+- Before it was `Promise<void>` → the worker couldn't see what Cloudinary said.
+- `uploadUserAvatar` still just `await`s it and ignores the value → nothing breaks there.
+
+### Step 6: Enqueue from the service (`src/services/file.upload.service.ts`)
+
+```ts
+    // 1. Clear the DB first - so the user never points to an image that no longer exists
+    await clearUserAvatar(userId)
+
+    // Invalidate the cache
+    await clearAvatarCache(userId)
+
+    // 2. Then delete from Cloudinary - failure here only leaves an unused image, so just log it
+    // await deleteImage(existingUser.avatar_public_id).catch((err) =>
+    //     logger.error({ err }, "Failed to delete avatar from Cloudinary")
+    // )
+
+    // 2. Deleting avatar from cloudinary using BullMQ Job
+    // If queueing fails (e.g. Redis down) it only leaves an unused image, so log it instead of failing the request
+    await deleteCloudinaryImageProducer(existingUser.avatar_public_id).catch((err) =>
+        logger.error({ err }, "Failed to enqueue Cloudinary avatar delete")
+    )
+```
+
+- Old way (commented out): call Cloudinary directly inside the request → the user waits, and a failure is only logged (no retry).
+- New way: only ADD a job → very fast (one Redis write). The worker does the slow part.
+- **Pass `publicId` in the job, not `userId`.**
+  - By the time the worker runs, `clearUserAvatar` has already set `avatar_public_id = null` in the DB.
+  - If the worker looked it up again by `userId`, it would find nothing to delete.
+  - Rule: **a job should carry everything it needs**. Don't make the worker re-read data that the request already changed.
+- `.catch(...)` → if Redis is down, `queue.add` throws. The DB is already cleared, so the request should still succeed. Worst case = one unused image in Cloudinary → just log it.
+
+### Example - user deletes avatar
+
+```
+DELETE /api/uploads/image   (user u1, avatar_public_id = "cloudinary-learning/images/xyz789")
+
+API:
+  findUserAvatar("u1")                → { avatar_public_id: ".../xyz789", ... }
+  clearUserAvatar("u1")               → DB: avatar_url = null, avatar_public_id = null
+  clearAvatarCache("u1")              → DEL avatar:u1
+  deleteCloudinaryImageProducer(".../xyz789")
+                                      → job #1 added to "delete_cloudinary_image"
+  → 200 { success: true, message: "Avatar deleted successfully" }
+
+Worker (a moment later):
+  job #1 { publicId: ".../xyz789" }
+  deleteImage(".../xyz789")           → { result: "ok" }
+  → Job 1 completed { publicId: 'cloudinary-learning/images/xyz789', result: 'ok' }
+```
+
+### How to test
+
+```bash
+# 1. Login → copy data.accessToken
+curl -X POST http://localhost:5001/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"yourpassword"}'
+
+# 2. Upload an avatar (form field must be "image")
+curl -X POST http://localhost:5001/api/uploads/image \
+  -H "Authorization: Bearer <TOKEN>" \
+  -F "image=@/path/to/photo.jpg"
+
+# 3. Delete it → enqueues the job
+curl -X DELETE http://localhost:5001/api/uploads/image \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+- Worker terminal → `Job <id> completed { publicId: ..., result: 'ok' }`.
+- Cloudinary dashboard → image is gone from `cloudinary-learning/images`.
+- **See the queue holding jobs:** stop the worker, upload + delete again, then:
+  ```
+  docker exec -it redis_course_redis redis-cli
+  127.0.0.1:6379> KEYS bull:delete_cloudinary_image:*
+  ```
+  Start the worker again → it picks up the waiting job immediately.
+
+### Common mistakes (made while building this)
+
+| Mistake | What happened | Fix |
+|---|---|---|
+| Worker function defined but never called | `npm run worker` exits, jobs never run | Call `deleteCloudinaryImageWorker()` at the bottom |
+| Worker called `removeUserAvatar(userId)` | DB already cleared → `"No avatar to delete"` → 3 failed attempts, image never deleted (and it would enqueue again → loop) | Put `publicId` in the job, worker calls only `deleteImage` |
+| `new Queue()` + `close()` on every call | New Redis connection per request | Create the Queue once at module level |
+| Queue name exported from producer file | Worker import also created a Queue | Keep the name in `connection.ts` |
+| No `.catch` around enqueue | Redis down → DELETE returns 500 though avatar is already removed | `.catch` + log |
+| No `return` in processor | `Job 1 completed undefined` | Return something useful |
+| Not checking Cloudinary's `result` | Job "completed" even when nothing was deleted | Check `res.result`, `throw` to retry |
+
+### Things to keep in mind
+
+| Situation | What happens |
+|---|---|
+| Worker not running | Jobs wait in Redis, run when the worker starts |
+| Cloudinary error | Worker throws → retried after 1s, 2s → after 3 attempts job is **failed** (kept in Redis) |
+| Image already deleted | `{ result: "not found" }` → treated as completed |
+| Redis is DOWN | Enqueue fails → logged, request still 200, image stays in Cloudinary |
+| Worker crashes mid-job | BullMQ marks the job as stalled and runs it again → job must be safe to run twice (deleting twice is fine) |
+
+### Quick revision
+
+- Producer = `queue.add(name, data, options)` (in the API). Worker = `new Worker(name, processor)` (separate process, `npm run worker`).
+- Producer and worker share the queue NAME and the connection options (`connection.ts`).
+- BullMQ connection needs `maxRetriesPerRequest: null`.
+- Create the Queue once. Call the worker function.
+- Job data = everything the worker needs (`publicId`), because the DB has already changed.
+- Processor: return → completed (value = `result`). Throw → retry → failed after `attempts`.
+- Cloudinary `destroy` doesn't throw → check `result` yourself.
+- Enqueue failure is not critical → `.catch` + log.
