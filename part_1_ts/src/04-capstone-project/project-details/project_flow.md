@@ -7009,3 +7009,279 @@ deleteImage("abc123") → old image removed from Cloudinary (no garbage left)
 - Upload order: upload new → save in DB → delete old.
 - Delete order: clear DB → delete from Cloudinary.
 - Rule for both: the DB should never point to an image that doesn't exist.
+
+## Avatar caching with Redis
+
+**Goal:** `GET /api/uploads/image` should not hit Postgres on every request. The avatar changes rarely (only on upload / delete) but is read on almost every page load. That makes it a good fit for caching.
+
+- The pattern is the same **cache-aside (lazy loading)** explained in [How Redis caching works](#how-redis-caching-works). Only the client library is different: **ioredis** here, node-redis in the product example.
+- Postgres is still the **source of truth**. Redis only holds a copy for 60 seconds.
+
+### Big picture
+
+```
+GET /image
+  │
+  ▼
+getAvatarsFromCache(userId) ── found? ──YES──▶ return cached avatar          (HIT - no DB call)
+  │
+  NO
+  ▼
+findUserAvatar(userId) ──▶ setAvatarCache(userId, avatar) ──▶ return avatar  (MISS)
+
+POST /image   ──▶ DB updated   ──▶ clearAvatarCache(userId)   (old copy removed)
+DELETE /image ──▶ DB cleared   ──▶ clearAvatarCache(userId)   (old copy removed)
+```
+
+### Files involved and the job of each file
+
+| # | File | Layer | Job |
+|---|---|---|---|
+| 1 | `.env` + `src/config/env.ts` | Config | `REDIS_URL` → `env.redisUrl` |
+| 2 | `src/lib/redis.ts` | Infra | Creates ONE ioredis client (`redis`) + connection options for BullMQ (`bullmqConnection`) |
+| 3 | `src/types/avatar.ts` | Type | `Avatar` - the shape stored in the cache AND returned by the API |
+| 4 | `src/lib/avatarsCache.ts` | Cache helper | Talks ONLY to Redis: `getAvatarsFromCache`, `setAvatarCache`, `clearAvatarCache` |
+| 5 | `src/services/file.upload.service.ts` | Service (business logic) | Decides WHEN to read / write / clear the cache |
+
+- Routes and repository did NOT change. The route still calls `getUserAvatar(userId)` and doesn't know if the answer came from Redis or Postgres.
+
+### Step 1: Install ioredis (`package.json`)
+
+```
+npm install ioredis bullmq
+```
+
+- `ioredis` → Redis client for Node.js. Connects automatically when created (no `connect()` call needed) and reconnects by itself if Redis restarts.
+- `bullmq` → job queue library (used later). It is built on ioredis, so using ioredis for the cache too keeps one Redis library in the project.
+
+### Step 2: Redis client (`src/lib/redis.ts`)
+
+```ts
+import Redis from 'ioredis'
+import {env} from '../config/env'
+
+export const redis = new Redis(env.redisUrl)
+
+// BullMQ will need it's own connection object request option
+
+const redisUrl = new URL(env.redisUrl)
+
+export const bullmqConnection = {
+    host: redisUrl.hostname,
+    port: Number(redisUrl.port),
+    maxRetriesPerRequest: null
+}
+```
+
+- `new Redis(env.redisUrl)` → ONE client created when the file is first imported. Every request reuses this same connection.
+- `new URL(env.redisUrl)` → Node's built-in URL parser. Splits `redis://localhost:6379` into `hostname = "localhost"` and `port = "6379"`.
+- `port` is a string in `URL` → `Number(...)` converts it.
+- `maxRetriesPerRequest: null` → BullMQ requires this. Its workers wait on Redis for a long time (blocking commands). The ioredis default (20 retries) would make them fail.
+- If the URL has a password (`redis://:pass@host:6379`), also pass `password: redisUrl.password`.
+
+### Step 3: Type (`src/types/avatar.ts`)
+
+```ts
+export type Avatar = {
+    imageUrl: string,
+    publicId: string | null
+}
+```
+
+- Same shape that `getUserAvatar` returns → the cached copy and the DB result look identical to the route. The route can't tell a HIT from a MISS.
+- Why not cache `DBUserAvatarRow` directly?
+  - The DB row is snake_case (`avatar_url`) and has `id`. The API sends camelCase (`imageUrl`).
+  - Convert to `Avatar` BEFORE caching. Otherwise a HIT and a MISS would return different shapes.
+- `imageUrl` is `string` (not `string | null`) → we only cache when the user actually has an avatar.
+
+### Step 4: Cache helper (`src/lib/avatarsCache.ts`)
+
+```ts
+import { redis } from "./redis";
+import type { Avatar } from "../types/avatar";
+
+const AVATARS_CACHE_KEY = (userId: string) => `avatar:${userId}`;
+
+const AVATARS_CACHE_TTL_SECONDS = 60;
+
+export const getAvatarsFromCache = async (userId: string): Promise<Avatar | null> => {
+    const cacheData = await redis.get(AVATARS_CACHE_KEY(userId))
+
+    if (!cacheData) {
+        return null
+    }
+
+    return JSON.parse(cacheData) as Avatar;
+}
+
+export const setAvatarCache = async (userId: string, avatar: Avatar): Promise<void> => {
+    await redis.set(
+        AVATARS_CACHE_KEY(userId),
+        JSON.stringify(avatar),
+        "EX",
+        AVATARS_CACHE_TTL_SECONDS
+    )
+}
+
+export const clearAvatarCache = async (userId: string): Promise<void> => {
+    await redis.del(AVATARS_CACHE_KEY(userId))
+}
+```
+
+- **Key per user** → `avatar:<userId>`, e.g. `avatar:u1`.
+  - The key is a FUNCTION, so it must be CALLED: `AVATARS_CACHE_KEY(userId)`. Passing `AVATARS_CACHE_KEY` itself → TS error `'(userId: string) => string' is not assignable to 'RedisKey'`.
+- **Redis stores strings only** → `JSON.stringify` on write, `JSON.parse` on read.
+- **`"EX", 60`** → key auto-deletes after 60 seconds (same as `SET key value EX 60` in redis-cli).
+  - ⚠️ It must be uppercase `"EX"`. ioredis types only accept the exact literal. `"Ex"` → `No overload matches this call`.
+  - TTL = safety net. Even if we forget to invalidate somewhere, stale data lives max 60 seconds.
+- `get` returns `null` on a miss → return type is `Promise<Avatar | null>`. With `strict` on, `Promise<Avatar>` would not allow `return null`.
+- One avatar per user → `setAvatarCache` takes `Avatar`, not `Avatar[]`. Get and set must store and read the SAME shape.
+- This file knows nothing about Postgres or Cloudinary. It only talks to Redis (same idea as `cloudinary.service.ts` only talking to Cloudinary).
+
+### Step 5: Use the cache in the service (`src/services/file.upload.service.ts`)
+
+#### GET - read through the cache
+
+```
+1. getAvatarsFromCache(userId)
+            │
+            ├── HIT ──→ return cachedAvatar (no DB call)
+            ↓ MISS
+2. findUserAvatar(userId)
+            │
+            ├── user not found ──→ AppError 404 "User not found"
+            │
+            ├── avatar_url is null ──→ return null (nothing cached)
+            ↓
+3. avatar = { imageUrl, publicId }
+4. setAvatarCache(userId, avatar)       → next request is a HIT
+5. return avatar
+```
+
+```ts
+export const getUserAvatar = async (userId: string) => {
+    // 1. Try the cache first - skips the DB on a hit
+    const cachedAvatar = await getAvatarsFromCache(userId);
+
+    if(cachedAvatar){
+        return cachedAvatar
+    }
+
+    // 2. Cache miss - read from the DB
+    const existingUser = await findUserAvatar(userId)
+
+    if (!existingUser) {
+        throw new AppError(404, "User not found")
+    }
+
+    // No avatar is a normal state (new user / deleted avatar), so return null instead of an error
+    if (!existingUser.avatar_url) {
+        return null
+    }
+
+    const avatar: Avatar = {
+        imageUrl: existingUser.avatar_url,
+        publicId: existingUser.avatar_public_id,
+    }
+
+    await setAvatarCache(userId, avatar)
+
+    return {
+        imageUrl: existingUser.avatar_url,
+        publicId: existingUser.avatar_public_id,
+    }
+}
+```
+
+- **Cache check must be the FIRST step.**
+  - Check the cache first and then call `findUserAvatar` after. So, if request will hit the DB, only if the cache is not available.
+- Is skipping the "User not found" check on a HIT safe? Yes. A key is only written after the DB confirmed the user exists.
+- `setAvatarCache` needs an `Avatar`, not the DB row (`existingUser`) → build `avatar` first, then cache it.
+- The last `return` could simply be `return avatar` (same object).
+- Users with NO avatar are not cached → their GET always goes to the DB. Fine for now. Caching "no avatar" would need a special value (e.g. `"null"`).
+
+#### POST (upload) - invalidate after the DB update
+
+```ts
+    try {
+        updatedUser = await updateUserAvatar(userId, secure_url, public_id)
+    } catch (error) {
+        ...
+        throw error
+    }
+
+    // Invalidate the cache
+    await clearAvatarCache(userId)
+```
+
+- Without this, GET would keep returning the OLD image for up to 60 seconds after upload.
+- Why AFTER `updateUserAvatar`?
+  - If we clear first and a GET comes in before the DB update finishes, that GET reads the OLD row and caches it again.
+  - If the DB update fails, we throw before reaching this line → the old cached copy is still correct, so nothing to clear.
+- Why delete instead of writing the new value? The next GET re-fills the cache from the DB (cache-aside). One place builds the cached value → less chance of a wrong shape.
+
+#### DELETE - invalidate after clearing the DB
+
+```ts
+    // 1. Clear the DB first - so the user never points to an image that no longer exists
+    await clearUserAvatar(userId)
+
+    // Invalidate the cache
+    await clearAvatarCache(userId)
+
+    // 2. Then delete from Cloudinary - failure here only leaves an unused image, so just log it
+    await deleteImage(existingUser.avatar_public_id).catch(...)
+```
+
+- Without this, GET would return a deleted image (broken `<img>`) for up to 60 seconds.
+- Same rule as upload: change the DB first, then clear the cache.
+
+> **Rule:** every function that WRITES avatar data must clear `avatar:<userId>`. Reads fill the cache, writes empty it.
+
+### Example - GET twice, then upload
+
+```
+GET  (1st)  → getAvatarsFromCache("u1") → null              MISS
+            → findUserAvatar("u1")      → { avatar_url: ".../xyz789.jpg", ... }
+            → SET avatar:u1 '{"imageUrl":".../xyz789.jpg","publicId":".../xyz789"}' EX 60
+
+GET  (2nd)  → getAvatarsFromCache("u1") → { imageUrl: ".../xyz789.jpg", ... }   HIT (no DB)
+
+POST        → updateUserAvatar("u1", ".../new111.jpg", ...)
+            → DEL avatar:u1
+
+GET  (3rd)  → MISS → DB → new111.jpg cached                 (fresh data, not stale)
+```
+
+Check it in redis-cli:
+
+```
+docker exec -it redis_course_redis redis-cli
+127.0.0.1:6379> KEYS avatar:*
+1) "avatar:u1"
+127.0.0.1:6379> GET avatar:u1
+"{\"imageUrl\":\"https://res.cloudinary.com/.../xyz789.jpg\",\"publicId\":\"cloudinary-learning/images/xyz789\"}"
+127.0.0.1:6379> TTL avatar:u1
+(integer) 47
+```
+
+- The API response is exactly the same for HIT and MISS. Only the speed and the DB load change.
+
+### Things to keep in mind
+
+| Situation | What happens |
+|---|---|
+| Key expired (after 60s) | Normal MISS → DB → cached again |
+| Redis restarted / emptied | Every GET is a MISS until re-filled. App still correct |
+| Redis is DOWN | `redis.get` throws → GET returns 500. (Improvement: wrap cache calls in `try/catch`, log, and fall back to the DB) |
+| Avatar changed directly in DB (not via API) | Stale for max 60 seconds (TTL is the safety net) |
+
+### Quick revision
+
+- Pattern: cache-aside. GET → Redis first → on miss, DB → save in Redis with TTL.
+- Key per user: `avatar:<userId>`. Call the key function, don't pass it.
+- Redis stores strings → `JSON.stringify` / `JSON.parse`. Expiry → `"EX", 60` (uppercase).
+- Cache the API shape (`Avatar`), not the DB row.
+- Cache check is the FIRST line of `getUserAvatar`, otherwise the cache is useless.
+- Upload & delete → change DB first, then `clearAvatarCache(userId)`.
+- `redis.ts`: `new Redis(url)` = client, `new URL(url)` = just parsing. BullMQ needs `maxRetriesPerRequest: null`.
