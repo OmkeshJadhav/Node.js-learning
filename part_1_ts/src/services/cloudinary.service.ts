@@ -37,6 +37,7 @@ export const uploadImage = (buffer: Buffer) => {
 }
 
 // Delete service
-export async function deleteImage(publicId: string): Promise<void> {
-    await cloudinary.uploader.destroy(publicId, { resource_type: "image" });
+// Returns Cloudinary's response, e.g. { result: "ok" } or { result: "not found" }
+export async function deleteImage(publicId: string): Promise<{ result: string }> {
+    return cloudinary.uploader.destroy(publicId, { resource_type: "image" });
 }

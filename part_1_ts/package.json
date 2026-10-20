@@ -25,7 +25,8 @@
     "02_02": "tsx src/02-node-http/02-routing.ts",
     "02_03": "tsx src/02-node-http/03-reading-body.ts",
     "02_04": "tsx src/02-node-http/04-json-response.ts",
-    "02_05": "tsx src/02-node-http/05-external-api-calls.ts"
+    "02_05": "tsx src/02-node-http/05-external-api-calls.ts",
+    "worker": "tsx src/bullMQ/worker/deleteCloudinaryImage.worker.ts"
   },
   "keywords": [],
   "author": "",

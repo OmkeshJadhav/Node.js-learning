@@ -1,3 +1,4 @@
+import { deleteCloudinaryImageProducer } from "../bullMQ/producer/deleteCloudinaryImage.producer"
 import { AppError } from "../errors/AppError"
 import { clearAvatarCache, getAvatarsFromCache, setAvatarCache } from "../lib/avatarsCache"
 import { logger } from "../lib/logger"
@@ -94,7 +95,13 @@ export const removeUserAvatar = async (userId: string): Promise<void> => {
 
 
     // 2. Then delete from Cloudinary - failure here only leaves an unused image, so just log it
-    await deleteImage(existingUser.avatar_public_id).catch((err) =>
-        logger.error({ err }, "Failed to delete avatar from Cloudinary")
+    // await deleteImage(existingUser.avatar_public_id).catch((err) =>
+    //     logger.error({ err }, "Failed to delete avatar from Cloudinary")
+    // )
+
+    // 2. Deleting avatar from cloudinary using BullMQ Job
+    // If queueing fails (e.g. Redis down) it only leaves an unused image, so log it instead of failing the request
+    await deleteCloudinaryImageProducer(existingUser.avatar_public_id).catch((err) =>
+        logger.error({ err }, "Failed to enqueue Cloudinary avatar delete")
     )
 }
