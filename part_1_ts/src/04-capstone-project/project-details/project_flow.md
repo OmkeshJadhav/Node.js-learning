@@ -8059,3 +8059,493 @@ curl -X DELETE http://localhost:5001/api/uploads/image \
 - Processor: return → completed (value = `result`). Throw → retry → failed after `attempts`.
 - Cloudinary `destroy` doesn't throw → check `result` yourself.
 - Enqueue failure is not critical → `.catch` + log.
+
+
+# Google OAuth
+
+**Goal:** Let a user log in with **"Continue with Google"** instead of email + password. After Google confirms who the user is, our API finds (or creates) the user in Postgres and returns **our own JWT access token**, the same token that `/login` returns.
+
+- Why?
+  - The user doesn't need to create or remember a password.
+  - Google has already verified the email → we can trust it.
+  - After login, the rest of the app works exactly the same (same JWT, same `authenticate` middleware).
+- Important: Google is used **only to find out who the user is**. After that, our app uses **our JWT**, not Google's tokens.
+
+## What is OAuth? (in simple words)
+
+- **OAuth 2.0** = a standard way for an app to get permission to access a user's data held by another service (Google), **without ever seeing the user's Google password**.
+- **OpenID Connect (OIDC)** = a small layer on top of OAuth 2.0 for **login**. It gives us an **`id_token`**, a signed JWT from Google that says *"this user is X, email is Y"*.
+- We are doing **login**, so we use OIDC → that is why the scope has `"openid"`.
+
+Real-life example:
+- You (user) want to enter a building (our app).
+- The building doesn't check your ID itself. It sends you to the government office (Google).
+- The office checks you and gives you a **one-time slip** (`code`).
+- The building takes that slip to the office (server-to-server) and gets back your **verified ID card** (`id_token`).
+- The building then gives you its **own entry pass** (our JWT).
+
+### Key words
+
+| Word | Meaning |
+|---|---|
+| **Client ID** | Public ID of our app, given by Google Cloud. Tells Google *which app* is asking |
+| **Client Secret** | Private password of our app. Only our backend knows it. **Never send it to the frontend / never commit it** |
+| **Redirect / Callback URL** | The URL in our API that Google sends the user back to after login (`/api/auth/google/callback`) |
+| **Consent screen** | Google's page where the user picks an account and allows access |
+| **Scope** | What info we are asking for (`openid`, `email`, `profile`) |
+| **Authorization code (`code`)** | A short-lived, one-time code Google puts in the callback URL. Useless without the client secret |
+| **`id_token`** | Signed JWT from Google with the user's identity (`sub`, `email`, ...) |
+| **`access_token` (Google's)** | Token to call Google APIs (Drive, Calendar...). We **don't need it** for login |
+| **`refresh_token`** | Token to get new Google access tokens later. Only given with `access_type: "offline"`. We don't need it |
+| **`sub`** | "Subject" = Google's **unique, permanent user ID**. We store it as `google_id` |
+| **`aud`** | "Audience" = which app the `id_token` was made for. Must equal **our** Client ID |
+
+## Big picture (Authorization Code flow)
+
+```
+Browser                        Our API (Express)                         Google
+───────                        ─────────────────                         ──────
+1. GET /api/auth/google ─────▶ startGoogleLogin()
+                               googleAuthUrl()  → builds Google URL
+   ◀──── 302 redirect ──────── res.redirect(url)
+
+2. Browser opens Google URL ─────────────────────────────────────────▶ Account picker
+                                                                        + consent screen
+                                                                        user selects account
+3. ◀──────────────────── 302 redirect to callback ?code=4/0Ab...  ──── Google
+
+4. GET /api/auth/google/callback?code=... ─▶ loginWithGoogle(code)
+                               │
+                               ├─ getToken(code) ── code + client secret ───▶ Google
+                               │       ◀──────────── { id_token, access_token } ──
+                               │
+                               ├─ verifyIdToken(id_token)   (check signature, aud, expiry)
+                               │       → payload { sub, email, ... }
+                               │
+                               ├─ find / link / create user in Postgres
+                               │
+                               └─ signAccessToken(user)  → OUR JWT
+   ◀──── 200 { accessToken } ──
+```
+
+- Steps 1-3 happen in the **browser** (redirects).
+- Step 4's `getToken` call happens **server-to-server** (our API → Google). The client secret never leaves our server.
+
+## Setup in Google Cloud Console
+
+- Requirements from the Google Cloud project:
+  1. Google Client ID
+  2. Google Client Secret
+  3. Redirect (callback) URL → must be registered in the console
+
+- Steps:
+  ```
+  Visit Google Cloud Console (console.cloud.google.com)
+          |
+  Create New Project
+          |
+  APIs & Services
+          |
+  OAuth consent screen  → app name, support email, add yourself as a "Test user"
+          |
+  Credentials
+          |
+  Create Credentials → OAuth client ID
+          |
+  Application type: "Web application"
+          |
+  Authorized redirect URIs → http://localhost:<PORT>/api/auth/google/callback
+          |
+  Copy Client ID + Client Secret
+  ```
+
+- The redirect URI in the console must match `GOOGLE_CALLBACK_URL` **exactly** (http vs https, port, trailing `/`). Otherwise Google shows **`redirect_uri_mismatch`**.
+- While the consent screen is in **"Testing"** mode, only the emails added as **Test users** can log in.
+
+## Files involved and the job of each file
+
+| # | File | Layer | Job |
+|---|---|---|---|
+| 1 | `.env` | Config | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL` |
+| 2 | `src/config/env.ts` | Config | Reads the 3 variables, app crashes at start if one is missing |
+| 3 | `package.json` | Config | `google-auth-library` dependency |
+| 4 | `migrations/002_create_user_table.sql` | DB | `users.google_id` column (UNIQUE), `password_hash` is nullable |
+| 5 | `src/types/googleAuth.ts` | Types | `GoogleUserProfile = { googleId, email }` |
+| 6 | `src/lib/google.ts` | Infra (talks to Google) | OAuth client, build the login URL, exchange `code` → verified user profile |
+| 7 | `src/repositories/user.repository.ts` | Repository (DB) | `findUserByGoogleId`, `linkGoogleIdUser`, `createGoogleUser` |
+| 8 | `src/services/auth.service.ts` | Service (business logic) | `startGoogleLogin`, `loginWithGoogle` (find / link / create + JWT) |
+| 9 | `src/routes/auth.routes.ts` | Route | `GET /google` and `GET /google/callback` |
+
+## Step 1 - Environment variables
+
+- `.env`
+  ```
+  GOOGLE_CLIENT_ID=xxxxxxxx.apps.googleusercontent.com
+  GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxx
+  GOOGLE_CALLBACK_URL=http://localhost:<PORT>/api/auth/google/callback
+  ```
+
+- `src/config/env.ts`
+  ```ts
+  googleClientId: checkRequiredEnvVariables("GOOGLE_CLIENT_ID"),
+  googleClientSecret: checkRequiredEnvVariables("GOOGLE_CLIENT_SECRET"),
+  googleCallbackUrl: checkRequiredEnvVariables("GOOGLE_CALLBACK_URL")
+  ```
+
+## Step 2 - Install the package
+
+```
+npm i google-auth-library
+```
+
+- Official Google library. Gives us `OAuth2Client`, which can:
+  - build the Google login URL → `generateAuthUrl()`
+  - exchange the `code` for tokens → `getToken()`
+  - verify the `id_token` → `verifyIdToken()`
+
+## Step 3 - Database: users table
+
+```sql
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(200) UNIQUE NOT NULL,
+    password_hash TEXT,                 -- NULL for Google-only users
+    google_id VARCHAR(255) UNIQUE,      -- Google "sub", NULL for password-only users
+    role VARCHAR(20) NOT NULL DEFAULT 'USER' CHECK (role IN ('USER', 'ADMIN')),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+```
+
+- `password_hash` is **nullable** → a user created by Google has no password.
+  - `loginUser` already handles this: `if (!user?.password_hash) throw 401` → a Google-only user can't log in with email + password.
+- `google_id` is **UNIQUE** → one Google account can be linked to only one user.
+- Why store `google_id` and not only match by email? `sub` **never changes**, but a user can change their email.
+
+## Step 4 - Type: `src/types/googleAuth.ts`
+
+```ts
+export type GoogleUserProfile = {
+    googleId: string,
+    email: string
+}
+```
+
+- Only the 2 things our app needs from Google. The rest of the app doesn't need to know about Google's payload shape.
+
+## Step 5 - `src/lib/google.ts` (talks to Google)
+
+### 5.1 Create the OAuth client (once, at module level)
+
+```ts
+import { OAuth2Client } from "google-auth-library";
+import { env } from "../config/env";
+
+const googleOauthClient = new OAuth2Client(
+    env.googleClientId,
+    env.googleClientSecret,
+    env.googleCallbackUrl
+)
+```
+
+### 5.2 Build the Google login URL
+
+```ts
+export const googleAuthUrl = () => {
+    return googleOauthClient.generateAuthUrl({
+        scope: ["openid", "email", "profile"],
+        access_type: "online",
+        prompt: "select_account"
+    })
+}
+```
+
+| Option | Meaning |
+|---|---|
+| `scope: "openid"` | We want to **log in** (OIDC) → Google gives us an `id_token` |
+| `scope: "email"` | Put the user's email in the `id_token` |
+| `scope: "profile"` | Name, picture (not used yet, useful later) |
+| `access_type: "online"` | We **don't** want a refresh token. We only need the user's identity once at login. (`"offline"` = also give a refresh token, needed only if our server must call Google APIs later when the user is not there) |
+| `prompt: "select_account"` | Always show the account picker, even if the user is logged in to one Google account. Spelled with an **underscore** |
+
+- The generated URL looks like:
+  ```
+  https://accounts.google.com/o/oauth2/v2/auth
+    ?client_id=...
+    &redirect_uri=http://localhost:<PORT>/api/auth/google/callback
+    &response_type=code
+    &scope=openid email profile
+    &access_type=online
+    &prompt=select_account
+  ```
+
+### 5.3 Exchange the `code` → verified Google user
+
+```ts
+export const getGoogleUserFromAuthCode = async (code: string): Promise<GoogleUserProfile> => {
+    if (!code) {
+        throw new AppError(400, "Google auth code is required.")
+    }
+
+    // 1. code → tokens (server-to-server call, uses the client secret)
+    const { tokens } = await googleOauthClient.getToken(code)
+
+    if (!tokens.id_token) {
+        throw new AppError(401, "Google login failed, id_token is missing!")
+    }
+
+    // 2. Verify the id_token
+    const ticket = await googleOauthClient.verifyIdToken({
+        idToken: tokens.id_token,
+        audience: env.googleClientId
+    })
+
+    // 3. Read the user's info from it
+    const payload = ticket.getPayload()
+
+    if (!payload?.sub || !payload.email) {
+        throw new AppError(400, "Google login failed: Invalid user profile")
+    }
+
+    return {
+        googleId: payload.sub,
+        email: payload.email.toLowerCase().trim()
+    };
+}
+```
+
+- **`getToken(code)`**
+  - Sends `code + client_id + client_secret + redirect_uri` to Google.
+  - Google returns `{ id_token, access_token, expiry_date, ... }`.
+  - A `code` can be used **only once** and expires in a few minutes → refreshing the callback page gives `invalid_grant`.
+- **`verifyIdToken({ idToken, audience })`** checks:
+  - the **signature** → the token was really made by Google (not fake)
+  - **`aud` === our Client ID** → the token was made for **our** app, not some other app
+  - **`iss`** is Google, and the token is **not expired**
+  - If any check fails → it **throws** → goes to the error handler.
+- **`getPayload()`** → the decoded data of the `id_token`:
+  ```json
+  {
+    "iss": "https://accounts.google.com",
+    "aud": "<our client id>",
+    "sub": "110248495921238986420",
+    "email": "user@gmail.com",
+    "email_verified": true,
+    "name": "...",
+    "picture": "...",
+    "exp": 1730000000
+  }
+  ```
+- We normalize the email (`toLowerCase().trim()`), same as in register / login, so `findUserByEmail` matches.
+
+## Step 6 - Repository: `src/repositories/user.repository.ts`
+
+```ts
+// Find a user who has already logged in with Google before
+export const findUserByGoogleId = async (googleId: string): Promise<user | null> => {
+    const result = await pool.query<DBUserRow>(
+        `SELECT id, email, role, created_at FROM users WHERE google_id = $1`,
+        [googleId]
+    )
+    return result.rows[0] ?? null;
+}
+
+// Existing email/password user → attach the Google account to it
+export const linkGoogleIdUser = async (userId: string, googleId: string): Promise<user> => {
+    const result = await pool.query<DBUserRow>(
+        `
+        UPDATE users
+        SET google_id = $1, updated_at = NOW()
+        WHERE id = $2
+        RETURNING id, email, role, created_at
+        `,
+        [googleId, userId]
+    );
+    return result.rows[0];
+}
+
+// Brand new user → no password
+export const createGoogleUser = async (email: string, googleId: string): Promise<user> => {
+    const result = await pool.query<DBUserRow>(
+        `
+        INSERT INTO users (email, google_id)
+        VALUES ($1, $2)
+        RETURNING id, email, role, created_at
+        `,
+        [email, googleId]
+    )
+    return result.rows[0]
+}
+```
+
+- `role` is not passed → DB default `'USER'`.
+- None of these return `password_hash`.
+
+## Step 7 - Service: `src/services/auth.service.ts`
+
+```ts
+export const startGoogleLogin = (): string => {
+    return googleAuthUrl()
+}
+
+const createAccessTokenForUser = (user: user): string => {
+    return signAccessToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role
+    })
+}
+
+export const loginWithGoogle = async (code: string): Promise<{ accessToken: string }> => {
+    const googleProfile = await getGoogleUserFromAuthCode(code)
+
+    // 1. Logged in with Google before?
+    let user = await findUserByGoogleId(googleProfile.googleId)
+
+    if (!user) {
+        // 2. Registered before with email + password?
+        user = await findUserByEmail(googleProfile.email)
+
+        if (user) {
+            // Link the Google account with the existing user
+            user = await linkGoogleIdUser(user.id, googleProfile.googleId)
+        } else {
+            // 3. First time ever → create the user
+            user = await createGoogleUser(googleProfile.email, googleProfile.googleId)
+        }
+    }
+
+    const accessToken = createAccessTokenForUser(user)
+
+    return { accessToken }
+}
+```
+
+### Find / Link / Create - the 3 cases
+
+```
+                    googleProfile { googleId, email }
+                                 │
+                                 ▼
+                  findUserByGoogleId(googleId)
+                       │                │
+                    found            not found
+                       │                │
+                       │                ▼
+                       │      findUserByEmail(email)
+                       │          │              │
+                       │        found         not found
+                       │          │              │
+                       │          ▼              ▼
+                       │   linkGoogleIdUser   createGoogleUser
+                       │   (set google_id)    (email + google_id,
+                       │                       no password)
+                       ▼          ▼              ▼
+                     ────────── user ───────────
+                                 │
+                                 ▼
+                     signAccessToken(user) → OUR JWT
+```
+
+| Case | Example | What happens |
+|---|---|---|
+| Returning Google user | Logged in with Google yesterday | Found by `google_id` → just issue JWT |
+| Existing password user, first Google login | Registered with `a@gmail.com` + password, now clicks "Continue with Google" | Found by email → `google_id` is saved → **same account**, can now log in both ways |
+| Brand new user | Never used the app | New row with `password_hash = NULL` → can log in **only with Google** |
+
+- `createAccessTokenForUser` is the same JWT logic as `loginUser` → after this point the app can't tell how the user logged in.
+
+## Step 8 - Routes: `src/routes/auth.routes.ts`
+
+```ts
+// 1. Start login → send the browser to Google
+authRouter.get("/google", (_req, res) => {
+    const googleAuthUrl = startGoogleLogin();
+
+    res.redirect(googleAuthUrl)
+})
+
+// 2. Google sends the browser back here with ?code=...
+authRouter.get("/google/callback", async (req, res, next) => {
+    try {
+        const code = req.query.code as string | undefined;
+
+        const { accessToken } = await loginWithGoogle(code ?? "")
+
+        res.status(200).json({
+            success: true,
+            data: { accessToken }
+        })
+    } catch (error) {
+        next(error)
+    }
+})
+```
+
+- Both are **GET** because the browser reaches them through **redirects**, not through `fetch` / Postman.
+- `res.redirect(url)` → sends **302** with `Location: <google url>` → the browser goes to Google by itself.
+- `code ?? ""` → if Google didn't send a code (for example the user clicked **Cancel** → Google sends `?error=access_denied`), the service throws **400** "Google auth code is required."
+- Route stays thin: read `code` → call service → send response. All logic is in the service / lib.
+
+## Testing it
+
+1. Start the API: `npm run dev`
+2. Open in the **browser** (not Postman): `http://localhost:<PORT>/api/auth/google`
+3. Pick a Google account → you land on the callback URL and see:
+   ```json
+   { "success": true, "data": { "accessToken": "eyJhbGciOi..." } }
+   ```
+4. Copy the `accessToken` → call a protected route with it:
+   ```
+   GET /api/auth/me
+   Authorization: Bearer <accessToken>
+   ```
+5. Check the DB:
+   ```sql
+   SELECT id, email, google_id, password_hash FROM users WHERE email = 'you@gmail.com';
+   ```
+   - New user → `google_id` is set, `password_hash` is NULL.
+   - Existing user → `google_id` is now set, `password_hash` is unchanged.
+
+## Common mistakes (made while building this)
+
+| Mistake | What happened | Fix |
+|---|---|---|
+| `prompt: "select-account"` (hyphen) | Google rejects it as an invalid `prompt` value | `prompt: "select_account"` (underscore) |
+| Thinking `access_type: "online"` gives a refresh token | It's the opposite | `"online"` = no refresh token (fine for login). `"offline"` = refresh token |
+| Redirect URI in console ≠ `GOOGLE_CALLBACK_URL` | `Error 400: redirect_uri_mismatch` | Copy-paste the exact same URL in both places |
+| Reusing / refreshing the callback URL | `invalid_grant` | A `code` works only once → start again from `/api/auth/google` |
+| Testing `/google` in Postman | Gets Google's HTML, nothing works | Open it in the browser |
+| Only decoding the `id_token` (`jwt.decode`) | Anyone could send a fake token | Always use `verifyIdToken` with `audience` |
+| Forgot `await` on `verifyIdToken` | `getPayload` is not a function (it's a Promise) | `const ticket = await verifyIdToken(...)` |
+| Unused import `import { tryCatch } from "bullmq"` in `auth.routes.ts` | Auto-import by the editor, not needed | Remove it |
+
+## Things to keep in mind
+
+| Situation | What happens |
+|---|---|
+| User clicks **Cancel** on Google | Callback gets `?error=access_denied`, no `code` → 400 |
+| Google-only user tries `/login` with email + password | `password_hash` is NULL → 401 "Invalid email or password" |
+| Same Google account logs in again | Found by `google_id` → no new row |
+| User changes their Gmail address | Still found by `google_id` (`sub` never changes) |
+| Consent screen in "Testing" mode | Only Test users can log in |
+| Client secret leaked | Anyone can pretend to be our app → reset the secret in the console |
+
+## Possible improvements (for a production app)
+
+- **`state` parameter (CSRF protection)**: generate a random value in `/google`, save it in a cookie, pass it to `generateAuthUrl({ state })`, and check that the callback's `state` matches. Stops an attacker from logging a victim into the attacker's account.
+- **Check `payload.email_verified`** before linking by email. Otherwise an account with an unverified email could take over an existing password account with the same email.
+- **Redirect to the frontend instead of returning JSON**: the callback is opened by the browser, so a real app redirects to the frontend (`res.redirect(FRONTEND_URL)`) and sets the token in an **httpOnly cookie**, instead of showing JSON on the screen.
+- Save `name` / `picture` from the `profile` scope (for example as the avatar).
+
+## Quick revision
+
+- OAuth = login through Google without seeing the user's password. OIDC (`openid` scope) gives an `id_token` that says who the user is.
+- Google Cloud gives **Client ID + Client Secret**. The **redirect URI** must match `GOOGLE_CALLBACK_URL` exactly.
+- `GET /google` → `generateAuthUrl` → `res.redirect` to Google.
+- Google → `GET /google/callback?code=...`.
+- `getToken(code)` (server-to-server, uses the secret) → `id_token`.
+- `verifyIdToken({ idToken, audience: clientId })` → `payload.sub` (= `google_id`) + `payload.email`.
+- Find by `google_id` → else find by email and **link** → else **create** (no password).
+- Return **our own JWT** → rest of the app doesn't care how the user logged in.
+- `prompt: "select_account"` (underscore). `access_type: "online"` = no refresh token.
