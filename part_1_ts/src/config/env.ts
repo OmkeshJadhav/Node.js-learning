@@ -23,5 +23,8 @@ export const env = {
     cloudinaryCloudName: checkRequiredEnvVariables('CLOUDINARY_CLOUD_NAME'),
     cloudinaryApiKey: checkRequiredEnvVariables('CLOUDINARY_API_KEY'),
     cloudinaryApiSecret: checkRequiredEnvVariables('CLOUDINARY_API_SECRET'),
-    redisUrl: checkRequiredEnvVariables('REDIS_URL')
+    redisUrl: checkRequiredEnvVariables('REDIS_URL'),
+    googleClientId: checkRequiredEnvVariables("GOOGLE_CLIENT_ID"),
+    googleClientSecret: checkRequiredEnvVariables("GOOGLE_CLIENT_SECRET"),
+    googleCallbackUrl: checkRequiredEnvVariables("GOOGLE_CALLBACK_URL")
 } as const;

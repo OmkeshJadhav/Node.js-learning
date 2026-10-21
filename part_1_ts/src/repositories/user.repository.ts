@@ -38,3 +38,45 @@ export const findUserByEmailWithPassword = async(email: string): Promise<DBUserR
 
     return result.rows[0] ?? null;
 }
+
+export const findUserByGoogleId = async(googleId: string): Promise< user | null> => {
+    const result = await pool.query<DBUserRow>(
+        `
+        SELECT id, email, role, created_at
+        FROM users
+        WHERE google_id = $1
+        `,
+        [googleId]
+    )
+
+    return result.rows[0] ?? null;
+}
+
+export const linkGoogleIdUser = async (userId: string, googleId: string): Promise<user> => {
+    const result = await pool.query<DBUserRow>(
+        `
+        UPDATE users
+        SET google_id = $1, 
+            updated_at = NOW()
+        WHERE id = $2
+        RETURNING id, email, role, created_at     
+        `,
+        [googleId, userId]
+    );
+
+    return result.rows[0] ?? null;
+}
+
+export const createGoogleUser = async (email: string, googleId: string): Promise<user> => {
+    const result = await pool.query<DBUserRow>(
+        `
+        INSERT INTO users(email, google_id)
+        VALUES ($1, $2)
+        RETURNING id, email, role, created_at
+        `,
+        [email, googleId]
+    )
+
+    return result.rows[0]
+
+}
