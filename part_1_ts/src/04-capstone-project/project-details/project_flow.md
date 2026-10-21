@@ -7289,7 +7289,463 @@ docker exec -it redis_course_redis redis-cli
 
 # BullMQ
 
-## Delete avatar from Cloudinary using a BullMQ job
+- BullMQ is a Node.js library that manages queues and jobs using Redis
+- **Background job:** Background job is a task that your application schedules to be performed separately from the main request-response flow.
+- BullMQ perform background jobs through: 1. Queue, 2. Producer, 3. Worker, 4. Redis
+- **Queue:** Queue holds jobs until they can be processed. A queue can also hold jobs that are delayed, retrying, or waiting for other reasons.
+- **worker:** Worker is the part of your application that takes jobs from the queue and executes the required task.
+- **Redis:** BullMQ uses redis to manage background job processing, to coordinate and store its jobs.
+
+## Producer.ts
+```ts
+import {Queue} from "bullmq"
+import {env} from '../config/env'
+
+const redisUrl = new URL(env.redisUrl)
+
+export const bullmqConnection = {
+    host: redisUrl.hostname,
+    port: Number(redisUrl.port) || 6379,  // URL without a port gives "" -> fall back to the default Redis port
+    maxRetriesPerRequest: null
+}
+
+const QUEUE_NAME = "welcome-email"
+const JOB_NAME = "send-welcome-email"
+
+const JOB_DATA = {
+  userId: 12345,
+  email: "omkesh.jadhav@gmail.com",
+  name: "Omkesh Jadhav"
+}
+
+// 1. Create Queue
+const welcomeQueue = new Queue(QUEUE_NAME, { connection: bullmqConnection });
+
+// 2. Add job to the queue
+const main = async () => {
+  await welcomeQueue.add(JOB_NAME, JOB_DATA);
+
+  await welcomeQueue.close();
+}
+
+main().catch(console.error)
+
+```
+
+## worker.ts
+```ts
+import {Worker} from 'bullmq';
+import {env} from '../config/env';
+
+const redisUrl = new URL(env.redisUrl)
+
+export const bullmqConnection = {
+    host: redisUrl.hostname,
+    port: Number(redisUrl.port) || 6379,  // URL without a port gives "" -> fall back to the default Redis port
+    maxRetriesPerRequest: null
+}
+
+const QUEUE_NAME = "welcome-email"
+const JOB_NAME = "send-welcome-email"
+
+// 1. Create worker and connect to queue
+const worker = new Worker(
+  QUEUE_NAME,
+
+  // 2. Job processor
+  async(job) => {
+    console.log(job.name);
+    console.log(job.id);
+    
+    const {userId, email, name} = job.data;
+
+
+  // 3. Simulate background work
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+
+  console.log(`Welcome email job completed for ${name}`)
+
+  return { success: true }
+},
+
+{ connection: bullmqConnection }
+
+);
+
+
+worker.on("completed", (job, result) => {
+  if (!job) return;
+  console.log(`Job ${job.id} completed: `, result)
+})
+  
+worker.on("failed", (job, error) => {
+  if (!job) return;
+  console.log(`Job ${job.id} failed: `, error.message)
+})
+
+console.log("Worker is running and waiting for jobs")
+```
+
+- Producer and Worker do not directly call each other, they communicate through bullmq & redis
+
+- **Worker doesn't filter by job name:** A worker processes every job in its queue, whatever the job name. `JOB_NAME` is only a label. If one queue holds several job types, check `job.name` inside the processor:
+  ```ts
+  async (job) => {
+    switch (job.name) {
+      case "send-welcome-email": return sendWelcomeEmail(job.data);
+      case "send-password-reset": return sendPasswordReset(job.data);
+      default: throw new Error(`Unknown job name: ${job.name}`);
+    }
+  }
+  ```
+
+- **Duplicated connection config:** `bullmqConnection` is copied in the producer and the worker. In a real project, put it in one shared module (e.g. `config/bullmq.ts`) and import it everywhere, so the producer and worker always point to the same Redis.
+
+- **Credentials dropped:** `new URL(env.redisUrl)` → we only take `hostname` and `port`. If the URL has a username, password, DB number or TLS (`rediss://`), those are lost and the connection fails on hosted Redis (Upstash, Redis Cloud). Either pass them too (`username`, `password`, `db`, `tls`) or create an ioredis client from the full URL:
+  ```ts
+  import IORedis from "ioredis";
+  export const bullmqConnection = new IORedis(env.redisUrl, { maxRetriesPerRequest: null });
+  ```
+
+- **`maxRetriesPerRequest: null`:** **Required** for a Worker. The worker uses blocking Redis commands that wait for new jobs, and ioredis's default retry limit would make them throw errors. For a Queue (producer) it is only recommended, but using the same config for both is simplest.
+
+## worker.on("error")
+- Always attach an `error` listener to the worker.
+  ```ts
+  worker.on("error", (err) => {
+    console.error("Worker error:", err);
+  });
+  ```
+- `failed` vs `error`:
+  - `failed` → **a job** failed (your processor threw an error). The worker is fine.
+  - `error` → **the worker itself** has a problem (e.g. Redis connection lost).
+- Worker is a Node.js EventEmitter. If an `error` event is emitted and nobody is listening, Node throws it as an unhandled error → the worker process can crash.
+- A Queue can emit `error` too → `welcomeQueue.on("error", (err) => console.error(err))`.
+
+
+## Process: 
+1. Producer added a job to the queue.
+2. BullMQ used redis to coordinate the job and make it available for processing.
+3. The worker which was already running, picked up the job.
+4. The worker received the job data, performed the simulated task and returned the result.
+5. BullMQ marked job as completed and emitted the completion event.
+
+
+## Job lifecycle & states
+- Every job is always in exactly one **state**. BullMQ moves the job from one state to another.
+```
+add(job)
+   │
+   ├── with delay ─────► delayed ──(delay over)──┐
+   ├── with priority ──► prioritized ────────────┤
+   └── normal ─────────► waiting ────────────────┤
+                                                 ▼
+                                              active   (a worker picked it up)
+                                                 │
+           ┌─────────────────────────────────────┼──────────────────────────────────┐
+           ▼                                     ▼                                  ▼
+       completed                      failed, attempts left              failed, no attempts left
+   (processor returned)           → delayed (backoff) → waiting             → failed
+                                    → runs again                       (or UnrecoverableError)
+```
+
+| State | Meaning |
+|---|---|
+| `waiting` | Ready, waiting for a free worker |
+| `prioritized` | Ready, but has a `priority` → picked by priority order |
+| `delayed` | Not ready yet → waiting for `delay` or for retry backoff to finish |
+| `active` | A worker is processing it right now |
+| `completed` | Processor returned successfully |
+| `failed` | Processor threw and no attempts are left (or it threw `UnrecoverableError`) |
+| `waiting-children` | Parent job waiting for its child jobs (only used with Flows) |
+
+- Check states from code:
+  ```ts
+  const state = await job.getState();          // "waiting" | "active" | "completed" | ...
+  const counts = await welcomeQueue.getJobCounts("waiting", "active", "delayed", "completed", "failed");
+  console.log(counts);  // { waiting: 2, active: 1, delayed: 0, completed: 10, failed: 1 }
+  ```
+
+
+## Retries and Retries of failed job
+- In Producer.ts 
+```ts
+const RETRIES_DATA = {
+  attempts: 3,
+  backoff: {
+    type: "exponential",
+    delay: 1000
+  }
+}
+await welcomeQueue.add(JOB_NAME, JOB_DATA, RETRIES_DATA);
+```
+
+- **Retry counts:** `attempts: 3` means 3 runs **in total** = 1st run + 2 retries (not 3 retries).
+- Exponential backoff waits `delay * 2^(retryNumber - 1)` before each retry. With `delay: 1000`:
+  - 1st run fails → wait ~1s → 2nd run
+  - 2nd run fails → wait ~2s → 3rd run
+  - 3rd run fails → job moves to **failed** (no more retries)
+- `type: "fixed"` waits the same `delay` before every retry.
+
+- In Worker.ts
+```ts
+worker.on("failed", (job, error) => {
+  if(!job) return;
+
+  console.error(`Job ${job.id} failed on attempt ${job.attemptsMade}`)
+
+
+  const maxAttempts = job.opts.attempts ?? 1;
+  const retriesExhausted = job.attemptsMade >= maxAttempts;
+
+  if(retriesExhausted){
+    console.error(`All attempts exhausted for job ${job.id}`)
+    console.error(error.message)
+  }
+}); 
+```
+
+- **UnrecoverableError:** Some errors will never be fixed by retrying (invalid data, user not found, email address rejected). Throw `UnrecoverableError` → the job moves straight to **failed**, the remaining attempts are skipped.
+  ```ts
+  import { Worker, UnrecoverableError } from "bullmq";
+
+  const worker = new Worker(QUEUE_NAME, async (job) => {
+    const { email, name } = job.data;
+
+    // Bad data -> retrying won't help -> fail immediately
+    if (!email) {
+      throw new UnrecoverableError(`Email missing for job ${job.id}`);
+    }
+
+    await sendEmail(email, name);  // a normal Error thrown here -> job is retried
+  }, { connection: bullmqConnection });
+  ```
+  - Normal `Error` → temporary problems that may work next time (network error, timeout, provider 5xx) → retry.
+  - `UnrecoverableError` → permanent problems (bad input, 4xx, not found) → no retry.
+  - The `failed` event still fires as usual.
+
+- A failed job may be retained in Redis. So you can investigate it or retry it manually. How long it remains depends on your job retention setting.
+
+- Due to retries, a failed job can be run twice. So, background jobs in production should be designed to be idempotent. - Running the same job more than once should not cause unwanted duplicate effects.
+
+## Job retention - removeOnComplete & removeOnFail
+- By default, BullMQ keeps **every** completed and failed job in Redis forever → Redis memory keeps growing.
+- Retention options decide how long finished jobs stay in Redis.
+  ```ts
+  await welcomeQueue.add(JOB_NAME, JOB_DATA, {
+    ...RETRIES_DATA,
+    removeOnComplete: true,                      // delete the job as soon as it completes
+    removeOnFail: { age: 7 * 24 * 3600 }         // keep failed jobs for 7 days, so we can investigate them
+  });
+  ```
+
+| Value | Meaning |
+|---|---|
+| `false` (default) | Keep forever |
+| `true` | Delete immediately |
+| `1000` (number) | Keep only the latest 1000 jobs |
+| `{ age: 3600 }` | Keep jobs for 3600 **seconds** (not ms!) |
+| `{ age: 3600, count: 1000 }` | Whichever limit is reached first |
+
+- Usually: remove completed jobs quickly (they're done), keep failed jobs longer (to debug / retry manually).
+- **defaultJobOptions:** set the options once on the Queue instead of on every `add()`. Options passed in `add()` override these.
+  ```ts
+  const welcomeQueue = new Queue(QUEUE_NAME, {
+    connection: bullmqConnection,
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 1000 },
+      removeOnComplete: true,
+      removeOnFail: { age: 7 * 24 * 3600 }
+    }
+  });
+
+  await welcomeQueue.add(JOB_NAME, JOB_DATA);  // gets all the defaults above
+  ```
+
+## Stalled jobs
+- When a worker picks a job, it takes a **lock** on it and keeps renewing the lock while the job runs.
+- If the lock is not renewed in time, BullMQ treats the job as **stalled**. This happens when:
+  1. The worker process crashes / is killed in the middle of a job.
+  2. The processor blocks the event loop with CPU-heavy work, so the worker can't renew the lock.
+- BullMQ regularly checks for stalled jobs and moves them back to **waiting** → another worker runs them **again** from the start.
+- If a job stalls more than `maxStalledCount` times, it moves to **failed** ("job stalled more than allowable limit").
+  ```ts
+  const worker = new Worker(QUEUE_NAME, processor, {
+    connection: bullmqConnection,
+    lockDuration: 30_000,     // lock valid for 30s, renewed automatically while the job runs (default 30s)
+    stalledInterval: 30_000,  // check for stalled jobs every 30s (default 30s)
+    maxStalledCount: 1        // allowed stalls before the job is failed (default 1)
+  });
+
+  worker.on("stalled", (jobId, prev) => {
+    console.warn(`Job ${jobId} stalled (was ${prev}) -> moved back to waiting`);
+  });
+  ```
+- This is the **second reason** (after retries) why jobs must be idempotent: a stalled job may have done half its work before it is run again.
+- Avoid stalls: don't block the event loop in the processor, and shut down workers gracefully (see Graceful shutdown).
+
+## Custom jobId - deduplication
+- By default, BullMQ gives every job a new id (`1`, `2`, `3`, ...). So adding the same job twice creates 2 jobs.
+- If we pass our own `jobId` and a job with that id **already exists in Redis**, the new `add()` is ignored (no duplicate job).
+  ```ts
+  const jobId = `welcome-email-${JOB_DATA.userId}`;
+
+  await welcomeQueue.add(JOB_NAME, JOB_DATA, { jobId });  // job created
+  await welcomeQueue.add(JOB_NAME, JOB_DATA, { jobId });  // ignored - same jobId already exists
+  ```
+- Useful when the same action can be triggered twice: user double-clicks, client retries the request, etc.
+- Build the jobId from what makes the work unique, e.g. `delete-avatar-${publicId}`, `welcome-email-${userId}`.
+- Rules:
+  - Don't use a plain number as jobId (it can clash with BullMQ's auto ids) and don't use `:` in it.
+  - Deduplication only works **while the job is still in Redis**. With `removeOnComplete: true`, after the job is removed the same jobId can be added again.
+- jobId stops **duplicate jobs** from being added. It does **not** stop the same job from running twice (retries, stalled) → the processor must still be idempotent.
+
+## Delayed Jobs
+- Delayed job is a job that should not become eligible for processing until a specified delay has elapsed.
+- The delay is not an exact execution time guarantee. The job becomes eligible after the specified delay, but processing may start later depending on worker availability.
+- Example
+```ts
+const DELAY = 10_000
+
+const job = await welcomeQueue.add(JOB_NAME, JOB_DATA, { ...RETRIES_DATA, delay: DELAY});
+```
+
+- Delay option is measured in milli-seconds:
+  10_000 = 10 Seconds
+  60_000 = 1 Min
+  3600_000 = 1 hour
+  86_400_000 = 24hr
+
+
+  ## Scheduling - upsertJobScheduler
+  - A scheduled job can run repeatedly according to defined schedule.
+  - In scheduler.ts
+  ```ts
+  const QUEUE_NAME = "reminder-queue";
+  const SCHEDULER_JOB_NAME = "daily-profile-reminder"
+  const CRON_PATTERN = "0 9 * * *"
+
+  const JOB_DATA = {
+    name: "send-daily-reminder",
+    data: {
+      message: "Please complete profile"
+    }
+  }
+
+  const bullmqConnection = {
+    host: redisUrl.hostname,
+    port: Number(redisUrl.port) || 6379,
+    maxRetriesPerRequest: null
+  }
+
+  const reminderQueue = new Queue(QUEUE_NAME, {connection: bullmqConnection});
+
+  const main = async () => {
+    await reminderQueue.upsertJobScheduler(SCHEDULER_JOB_NAME, {pattern: CRON_PATTERN, tz: "Asia/Kolkata"}, JOB_DATA)
+    console.log("Daily reminder scheduler configured.")
+  }
+
+  main()
+    .catch(console.error)
+    .finally(() => reminderQueue.close())
+  ```
+
+- Cron Expression
+  ```
+    0 9 * * *
+    │ │ │ │ │
+    │ │ │ │ └── Day of week
+    │ │ │ └──── Month
+    │ │ └────── Day of month
+    │ └──────── Hour (9 AM)
+    └────────── Minute (0)
+  ```
+- Without tz, the cron runs in the server's timezone.
+- A scheduler generates jobs, a worker must still process them. So, create a worker to execute this job.
+
+## Priorities
+- Process important jobs first
+- BullMQ supports job priorities through "priority" option
+- Lower numeric value means higher priority in BullMQ
+- Example
+  ```ts
+  await welcomeQueue.add(
+    "send-promotional-email",  // job name
+    { email: "user@example.com" },  // job data
+    { priority: 10}   // High numeric value --> Low priority
+  )
+
+  await welcomeQueue.add(
+    "send-password-reset",  // job name
+    { email: "user@example.com" },  // job data
+    { priority: 1}   // Low numeric value --> High priority
+  )
+
+  await welcomeQueue.add(
+    "send-order-confirmation",  // job name
+    { email: "user@example.com" },  // job data
+    { priority: 3}
+  )
+  ```
+
+- Jobs without a priority are treated as priority 0 and can be processed ahead of jobs with explicit positive priority values.
+
+
+## Concurrency & Rate Limiting
+- Allowing multiple jobs to be in the progress at the same time.
+- Allows the worker to process multiple jobs concurrently - Worker can start another job while an earlier job is waiting for its simulated request to finish.
+- When one worker isn't enough, we can run multiple worker processes with their concurrency. Each worker connects to the same queue in Redis. BullMQ coordinates job distribution, so workers don't normally process the same job simultaneously.
+- For production, worker processes run using a process manager, containers or a deployment platform.
+- BullMQ also supports rate limiting, which controls how frequently jobs are processed. The appropriate configuration depends on provider's limits and whether you need a global limit shared by all workers.
+- Example:
+  ```ts
+  {
+    connection: bullmqConnection,
+    concurrency: 5,
+    limiter: {
+      max: 10,
+      duration: 1000,
+    }
+  }
+  ```
+- Concurrency controls how many jobs can be processed simultaneously
+- Rate limiting controls how frequently jobs are allowed to proceed.
+- These are **Worker options** → passed as the 3rd argument of `new Worker(QUEUE_NAME, processor, { ... })`.
+
+- **Concurrency:** `concurrency: 5` → one worker process can have up to 5 jobs active at the same time.
+  - It helps only for **async I/O work** (sending emails, API calls, Cloudinary, DB queries), because the worker starts another job while the earlier one is waiting on the network.
+  - It does **not** help **CPU-heavy work** (image processing, big calculations), because Node runs JS on a single thread, so those jobs still run one after another. For CPU-heavy work, use more worker processes or BullMQ sandboxed processors.
+  - Total parallel jobs = number of worker processes × concurrency.
+
+- **Rate limiter:** In BullMQ the limiter is **global per queue**, not per worker. All workers of that queue share the same limit.
+  - `max: 10, duration: 1000` → at most 10 jobs per second **across all workers** of the queue.
+  - Example: 3 workers with this limiter → still only 10 jobs/sec in total (not 30).
+  - Useful when a provider has a limit, e.g. an email API that allows 10 requests/sec.
+
+
+## Graceful shutdown
+- When a worker process is stopped (Ctrl+C, deploy, Docker/PM2 restart), it gets a signal: `SIGINT` (Ctrl+C) or `SIGTERM` (Docker, PM2, Kubernetes).
+- If the process exits immediately, the active jobs are left half-done → their lock expires → they become **stalled** → they run again later.
+- Graceful shutdown → stop taking new jobs, let the active jobs finish, then exit.
+  ```ts
+  const shutdown = async (signal: string) => {
+    console.log(`${signal} received, closing worker...`);
+
+    await worker.close();  // stops picking new jobs + waits for active jobs to finish
+
+    console.log("Worker closed");
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => shutdown("SIGINT"));    // Ctrl+C
+  process.on("SIGTERM", () => shutdown("SIGTERM"));  // Docker / PM2 / Kubernetes stop
+  ```
+- Platforms give only a short grace period (e.g. Docker waits 10s) before force-killing the process (`SIGKILL`, which can't be caught). Long jobs may still be cut off → keep jobs short and idempotent.
+- The API server (producer side) should also close its queues on shutdown: `await welcomeQueue.close()`.
+
+
+## Practical Implementation: Delete avatar from Cloudinary using a BullMQ job
 
 **Goal:** `DELETE /api/uploads/image` should not wait for Cloudinary. The request only clears the DB + cache and puts a **job** in a Redis queue. A separate **worker** process picks the job up and deletes the image from Cloudinary in the background.
 
