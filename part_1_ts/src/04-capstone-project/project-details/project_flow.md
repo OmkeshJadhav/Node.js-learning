@@ -3,7 +3,7 @@
 - npm init -y
 - node_modules
 - package.json & package-lock.json
-  ```
+  ```json
   {
   "name": "capstone-project",
   "version": "1.0.0",
@@ -37,7 +37,7 @@
   }
   ```
 - tsconfig.json
-  ```
+  ```json
   {
       "compilerOptions": {
           "target": "ES2022",
@@ -74,16 +74,16 @@
 - Create src folder
 - Create server.ts as entry file inside src
 - Install express and types of express
-  ```
+  ```bash
       npm i express
       npm i -D @types/express
   ```
 - Install dotenv
-  ```
+  ```bash
       npm i dotenv
   ```
 - Install cors
-  ```
+  ```bash
       npm i cors
   ```
 - Create below folders inside src
@@ -95,9 +95,9 @@
 ## env configuration
 
 - Add .env file at the root level
-  In .env add PORT and NODE_ENV as env variables
+  - In .env add PORT and NODE_ENV as env variables
 
-  ```
+  ```env
   PORT=5001
 
   NODE_ENV='development'
@@ -110,7 +110,7 @@
 - Create env.ts file in config folder
 - In env.ts - Configure environment variables using dotenv.config() for port, nodeEnv and isProduction
 
-  ```
+  ```ts
   import dotenv from 'dotenv'
 
   dotenv.config();
@@ -124,7 +124,7 @@
 
 - We can also create function to check if env variable is present
 
-  ```
+  ```ts
   import dotenv from 'dotenv'
 
   dotenv.config();
@@ -156,7 +156,7 @@
 - Create createApp function and inside it use app.use middleware with express.json()
   - app.use(express.json()) return middleware that only parses json and only looks at request where Content-Type header matches the type option
 
-  ```
+  ```ts
   import express from 'express'
   import { errorHandler } from './middlewares/errorHandler';
   import { notFound } from './middlewares/notFound';
@@ -186,7 +186,7 @@
 - This is the base file of the project
 - It executes createApp function of app.ts and listen to the server
 
-  ```
+  ```ts
   import { createApp } from "./app";
   import { env } from "./config/env";
   import { logger } from "./lib/logger";
@@ -211,7 +211,7 @@
 - Create logger function using pino
 - For setup - use google/chatgpt standard pino steup
 
-  ```
+  ```ts
   import pino from 'pino'
   import { env } from '../config/env'
 
@@ -234,7 +234,7 @@
 - Function should receive - err: Error, \_req: Request, res: Response, \_next: NextFunction - as arguments and return void
 - Inside the function log the error and send response
 
-  ```
+  ```ts
   import { NextFunction, Request, Response } from "express";
   import { logger } from "../lib/logger";
 
@@ -259,7 +259,7 @@
 
 - Create notFound.ts middleware
 
-  ```
+  ```ts
   import { Request, Response } from "express";
 
   export const notFound = (_req: Request, res: Response): void => {
@@ -274,7 +274,7 @@
 
 - Middleware function in Express to parse incoming HTML form submission
 - Parses incoming requests with URL-encoded payloads.
-  ```
+  ```ts
       app.use(express.urlencoded({extended: true}))
   ```
 
@@ -293,7 +293,7 @@
     - maxAge -> cache the preflight responses for the mentioned time (in seconds) - avoid sending options requests multiple times
     - optionsSuccessStatus -> Provide a status code to use for successful OPTIONS requests
 
-  ```
+  ```ts
   import cors from 'cors'
 
   export const configureCors = () => {
@@ -346,7 +346,7 @@
   ```
 
 - Import cors-config.ts in app.ts and then use as middleware
-  ```
+  ```ts
   app.use(configureCors())
   ```
 
@@ -358,7 +358,7 @@
 - import Router from Express
 - Assign the route variable to Router function and then used http methods on this variable
 
-  ```
+  ```ts
   import { Router } from 'express';
 
   export const healthRouter = Router()
@@ -376,7 +376,7 @@
 - In routes folder, create an entry file index.ts
 - In this, we will combine all the routes of the application to plug all the routes in one place as middleware by importing all routes in this file.
 
-  ```
+  ```ts
   import { Router } from 'express'
   import { healthRouter } from './health.route';
 
@@ -388,17 +388,17 @@
 ### Using apiRouter in app.ts as middleware
 
 - Now use apiRouter from index.ts in main app.ts as middleware - after adding '/api' as prefix
-  ```
+  ```ts
       app.use('/api', apiRouter)
   ```
-        - actual endpoints become /api/......
-        - whenever a frontend/client request starts with /api, Express forwards that request to apiRouter for further routing.
+  - actual endpoints become /api/......
+  - whenever a frontend/client request starts with /api, Express forwards that request to apiRouter for further routing.
 
 ## DOCKER
 
 - Create docker-compose.yml at the root.
 
-  ```
+  ```yaml
   services:
       postgres:
           image: postgres:18-alpine
@@ -422,7 +422,7 @@
   ```
 
 - In .env, add DATABASE_URL variable
-  ```
+  ```text
   postgresql://postgres:postgres@localhost:5444/nodejs-capstone
          │          │       │       │        │        │
          │          │       │       │        │        └── Database
@@ -448,7 +448,7 @@
 
 - Install pg package and its types
 
-  ```
+  ```bash
   npm install pg
   npm i --save-dev @types/pg
   ```
@@ -458,7 +458,7 @@
 
 - Create db.ts in src/lib/db.ts
 
-  ```
+  ```ts
   import { Pool } from 'pg'
   import { env } from '../config/env'
 
@@ -471,7 +471,7 @@
   - Instead of opening a new database connection every time you execute a query, the pool keeps connections available and reuses them.
   - Why use a Pool instead of creating a connection every time?
     - Imagine your application receives 100 requests:
-      ```
+      ```text
       Request 1 ──┐
       Request 2 ──┤
       Request 3 ──┤
@@ -480,7 +480,7 @@
       Request 100 ┘
       ```
     - Without a pool
-      ```
+      ```text
       Request → Create connection → Query → Close connection
       Request → Create connection → Query → Close connection
       Request → Create connection → Query → Close connection
@@ -491,7 +491,7 @@
 - Why migration ? Migrations allow database schema changes made by one developer to be version-controlled and shared with other developers. When another developer pulls those migration files and runs the migration command, the pending changes are automatically applied to their local database, keeping their database structure in sync.
 - Create migrate.ts in scripts folder or db folder: /src/scripts/migrate.ts or /src/db/migrate.ts
 
-  ```
+  ```ts
   import path from "node:path";
   import { pool } from "../lib/db";
   import fs from "node:fs";
@@ -599,7 +599,7 @@
   8. Return connection to pool
 
 - Complete process
-  ```
+  ```text
           npm run migrate
                   │
                   ↓
@@ -647,7 +647,7 @@
 - Create AppError.ts inside errors folder: /src/errors/AppError.ts
 - Create constructor for AppError
 
-  ```
+  ```ts
   AppError.ts
 
   export class AppError extends Error {
@@ -662,7 +662,7 @@
   ```
 
 - Add AppError constructor to errorHandler.ts in middlewares
-  ```
+  ```ts
   if(err instanceof AppError){
       res.status(err.statusCode).json({
           success: false,
@@ -676,17 +676,17 @@
 
 - AppError lets your application throw structured, expected errors with an HTTP status code, while errorHandler centrally converts those errors into HTTP responses; unexpected errors fall back to 500.
 - AppError.ts: Defines the type of error your application intentionally throws:
-  ```
+  ```ts
   throw new AppError(404, "User not found");
   ```
 - errorHandler.ts: Defines how errors are converted into HTTP responses:
-  ```
+  ```text
   AppError → its statusCode
   Unknown Error → 500
   ```
 - if we don't use AppError then we have to manually handle all these status code and error message inside errorHandler like
 
-  ```
+  ```ts
   if (err.message === "User not found") {
       return res.status(404).json(...);
   }
@@ -714,7 +714,7 @@
 - Why registration? A new user sends email & password. The server validates them, makes sure the email is not already taken, hashes the password and saves the user in the DB. The user can then login (see User Login Flow).
 - Layers used (see Folder Structure above): Route → Service → Repository → DB
 - Flow
-  ```
+  ```text
   POST /api/auth/register { email, password }
               │
               ↓
@@ -749,7 +749,7 @@
 
 - bcrypt is used to hash the password before saving it in the DB. Never store plain text passwords.
 
-  ```
+  ```bash
   npm i bcrypt
 
   npm i -D @types/bcrypt
@@ -759,7 +759,7 @@
 
 - Best practice: Create constant folder and maintain constant values like password length inside it
 
-  ```
+  ```ts
   export const min_password_length = 6;
 
   export const salt_round = 10;
@@ -773,7 +773,7 @@
 - DBUserRow -> Actually it is what we query from users table (without password)
 - DBUserRowWithPassword -> DBUserRow + password_hash. `password_hash` is `string | null` because users created via Google login won't have a password.
 
-  ```
+  ```ts
   export type user = {
       id: string,
       email: string,
@@ -798,29 +798,29 @@
 #### 4.1 findUserByEmail
 
 - Create findUserByEmail function. The function will return a user (if found) or null (if not found)
-  ```
+  ```ts
   export const findUserByEmail = async (email: string): Promise<user | null> => {}
   ```
 - Write query to find user - `$1` is a parameterized query & `[email]` provides the value for $1 (prevents SQL injection)
-  ```
+  ```ts
   const result = await pool.query<DBUserRow>(
       "SELECT id, email, role, created_at FROM users WHERE email = $1",
       [email]
   )
   ```
 - return the result - first row if found, else null
-  ```
+  ```ts
   return result.rows[0] ?? null
   ```
 
 #### 4.2 createUser
 
 - Create createUser function. The function will return the created user
-  ```
+  ```ts
   export const createUser = async (email: string, password_hash: string): Promise<user> => {}
   ```
 - Write query to insert the new user into the DB - `RETURNING` returns the inserted row, so no need of a separate SELECT query
-  ```
+  ```ts
   const result = await pool.query<DBUserRowWithPassword>(
       `INSERT INTO users (email, password_hash)
           VALUES($1, $2)
@@ -830,48 +830,48 @@
   )
   ```
 - return created user data
-  ```
+  ```ts
   return result.rows[0];
   ```
 
 ### 5. Create registerUser function in src/services/auth.service.ts
 
 - Create registerUser function
-  ```
+  ```ts
   export const registerUser = async (email: string, password: string): Promise<void> => {}
   ```
 - Verify if email and password are present
-  ```
+  ```ts
   if (!email || !password) {
       throw new AppError(400, "Email and password are required!")
   }
   ```
 - Verify password length is more than minimum password length (min_password_length from constants)
-  ```
+  ```ts
   if (password.length < min_password_length) {
       throw new AppError(400, "Password must be at least 6 characters.")
   }
   ```
 - normalize the email to lower case and trim any white spaces - so "ABC@x.com " and "abc@x.com" are treated as same email
-  ```
+  ```ts
   const normalizeEmail = email.toLowerCase().trim()
   ```
 - Find if the user is already present - As it is a DB related task we use findUserByEmail from repositories
-  ```
+  ```ts
   const existingUser = await findUserByEmail(normalizeEmail)
   ```
 - If email of user is already present then throw error - 409 Conflict
-  ```
+  ```ts
   if (existingUser) {
       throw new AppError(409, "Email already exists.")
   }
   ```
 - Create password hash using bcrypt (salt_round using constant)
-  ```
+  ```ts
   const password_hash = await bcrypt.hash(password, salt_round)
   ```
 - Call createUser function with email and password hash to save the user data in the DB - As it is a DB related task we use createUser from repositories
-  ```
+  ```ts
   await createUser(normalizeEmail, password_hash)
   ```
 
@@ -884,7 +884,7 @@
 - Send response with status code 201 (Created)
 - Catch the error and pass it to errorHandler using next(error)
 
-  ```
+  ```ts
   import { Router } from "express";
   import { registerUser } from "../services/auth.service";
 
@@ -911,7 +911,7 @@
 
 - All auth routes get "/auth" prefix → final endpoint becomes /api/auth/register
 
-  ```
+  ```ts
   import { Router } from 'express'
   import { healthRouter } from './health.route';
   import { authRouter } from './auth.routes';
@@ -923,7 +923,7 @@
   ```
 
 - Test: POST /api/auth/register with body
-  ```
+  ```json
   {
       "email": "test@example.com",
       "password": "123456"
@@ -936,7 +936,7 @@
 
 - Complete file
 
-  ```
+  ```ts
   export type user = {
       id: string,
       email: string,
@@ -960,7 +960,7 @@
 
 - Complete file
 
-  ```
+  ```ts
   import { Router } from "express";
   import { registerUser } from "../services/auth.service";
 
@@ -987,7 +987,7 @@
 
 - Complete file
 
-  ```
+  ```ts
   import { Router } from 'express'
   import { healthRouter } from './health.route';
   import { authRouter } from './auth.routes';
@@ -1002,7 +1002,7 @@
 
 - Complete file
 
-  ```
+  ```ts
   import { min_password_length, salt_round } from "../constants/auth.constants"
   import { AppError } from "../errors/AppError"
   import { createUser, findUserByEmail } from "../repositories/user.repository"
@@ -1035,7 +1035,7 @@
 
 - Complete file
 
-  ```
+  ```ts
   import { pool } from "../lib/db";
   import { DBUserRow, DBUserRowWithPassword, user } from "../types/user";
 
@@ -1065,7 +1065,7 @@
 
 - Why login? The user sends email & password. If they are correct, the server returns a signed JWT access token. The client sends this token in the Authorization header for protected routes (see Authentication Middleware).
 - Flow
-  ```
+  ```text
   POST /api/auth/login { email, password }
               │
               ↓
@@ -1097,7 +1097,7 @@
 
 - jsonwebtoken is used to create (sign) and verify JWT tokens
 
-  ```
+  ```bash
   npm i jsonwebtoken
 
   npm i -D @types/jsonwebtoken
@@ -1107,14 +1107,14 @@
 
 - Add JWT_SECRET & JWT_ACCESS_EXPIRES_IN in .env
 
-  ```
+  ```env
   JWT_SECRET='super_secret_jwt'
 
   JWT_ACCESS_EXPIRES_IN='30m'
   ```
 
 - Add them to src/config/env.ts using checkRequiredEnvVariables - so app fails at startup if they are missing
-  ```
+  ```ts
   export const env = {
       port: Number(process.env.PORT ?? 5001),
       nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -1129,7 +1129,7 @@
 ### 3. Create TokenPayload type in src/types/user.ts
 
 - This is the data we store inside the JWT. Never store password or sensitive data in it - JWT payload is only encoded (base64), not encrypted.
-  ```
+  ```ts
   export type TokenPayload = {
       userId: string,
       email: string,
@@ -1142,7 +1142,7 @@
 - jwt.sign creates a token from payload, signed with secret, with expiry time
 - `as SignOptions['expiresIn']` -> env value is a plain string but jsonwebtoken expects specific format like '30m', '1h' - so we cast it
 
-  ```
+  ```ts
   import { env } from "../config/env";
   import { TokenPayload } from "../types/user";
   import jwt, {SignOptions} from "jsonwebtoken"
@@ -1161,7 +1161,7 @@
 - findUserByEmail (used in register) does not select password_hash. For login we need password_hash to compare, so we create a separate function.
 - Keeping them separate makes sure password_hash is fetched only when really needed.
 
-  ```
+  ```ts
   export const findUserByEmailWithPassword = async(email: string): Promise<DBUserRowWithPassword | null> => {
       const result = await pool.query<DBUserRowWithPassword>(
           `
@@ -1186,7 +1186,7 @@
 - Sign access token with userId, email, role and return it
 - Note: Same message "Invalid email or password." for both wrong email & wrong password - so attacker can't find out which emails are registered
 
-  ```
+  ```ts
   export const loginUser = async (email: string, password: string): Promise<{accessToken: string}> => {
       if (!email || !password) {
           throw new AppError(400, "Email and password are required!")
@@ -1223,7 +1223,7 @@
 - Send response with status 200 and access token
 - Any AppError thrown from service goes to errorHandler via next(error)
 
-  ```
+  ```ts
   authRouter.post("/login", async (req, res, next) => {
       try {
           const { email, password } = req.body;
@@ -1243,7 +1243,7 @@
   ```
 
 - Test: POST /api/auth/login with body
-  ```
+  ```json
   {
       "email": "test@example.com",
       "password": "123456"
@@ -1255,7 +1255,7 @@
 1. Authentication Middleware
    - Why authentication middleware? Some routes (like /me) should be accessible only to logged-in users. The middleware runs before the route handler, verifies the access token sent by the client and attaches the logged-in user's data to req.user. If the token is missing/invalid, the request never reaches the route handler.
    - Flow
-     ```
+     ```text
      Client Request (Authorization: Bearer <accessToken>)
                  │
                  ↓
@@ -1280,7 +1280,7 @@
    - If valid - returns the decoded payload (userId, email, role)
    - If invalid or expired - jwt.verify throws error, we catch it and throw AppError with 401
 
-     ```
+     ```ts
      import { AppError } from "../errors/AppError";
 
      export const verifyAccessToken = (token: string): TokenPayload => {
@@ -1296,7 +1296,7 @@
    - By default, Express Request type does not have user property. So TypeScript will throw error on req.user = ...
    - Create express.d.ts in src/types/express.d.ts and extend the Request interface using declaration merging
 
-     ```
+     ```ts
      import { TokenPayload } from "./user";
 
      declare global {
@@ -1321,7 +1321,7 @@
    - Verify the token using verifyAccessToken and attach the decoded payload to req.user
    - Call next() to move to the route handler
 
-     ```
+     ```ts
      import { NextFunction, Request, Response } from "express";
      import { AppError } from "../errors/AppError";
      import { verifyAccessToken } from "../lib/jwt";
@@ -1348,7 +1348,7 @@
    - Pass authenticate as second argument (before route handler) - it runs first for this route only
    - Inside handler, req.user is available with the logged-in user's data
 
-     ```
+     ```ts
      import { authenticate } from "../middlewares/auth.middleware";
 
      authRouter.get("/me", authenticate, async (req, res, next) => {
@@ -1366,7 +1366,7 @@
      ```
 
    - Test: GET /api/auth/me with header
-     ```
+     ```http
      Authorization: Bearer <accessToken received from /login>
      ```
 
@@ -1379,7 +1379,7 @@
 ### POST Request - Create Task
 
 - Flow
-  ```
+  ```text
   POST /api/tasks { title }
   (Authorization: Bearer <accessToken>)
               │
@@ -1413,7 +1413,7 @@
 - Task -> task data we return from functions
 - TaskRow -> what we query from support_tasks table. Right now both are same, so TaskRow is just an alias of Task. Keeping separate names lets us change the DB row shape later without touching the rest of the code.
 
-  ```
+  ```ts
   export type Task = {
       id: string,
       title: string,
@@ -1433,7 +1433,7 @@
 - We only insert title & user_id. id, status ('OPEN'), created_at, updated_at get their DEFAULT values from the table (see 003_create_support_tasks_table.sql)
 - `RETURNING` returns the inserted row, so no need of a separate SELECT query
 
-  ```
+  ```ts
   import { pool } from "../lib/db";
   import { TaskRow } from "../types/task";
 
@@ -1460,7 +1460,7 @@
   - Return the trimmed title
 - Create createUserTask function - validate the title and then call createTask from repository
 
-  ```
+  ```ts
   import { AppError } from "../errors/AppError"
   import { createTask } from "../repositories/user.task.repository";
 
@@ -1494,7 +1494,7 @@
 - Call createUserTask and send response with status 201 (Created) with the created task
 - Catch the error and pass it to errorHandler using next(error)
 
-  ```
+  ```ts
   import { Router } from 'express'
   import { authenticate } from '../middlewares/auth.middleware';
   import { createUserTask } from '../services/user.task.service';
@@ -1523,7 +1523,7 @@
 
 - All task routes get "/tasks" prefix → final endpoint becomes /api/tasks
 
-  ```
+  ```ts
   import { Router } from 'express'
   import { healthRouter } from './health.route';
   import { authRouter } from './auth.routes';
@@ -1537,16 +1537,16 @@
   ```
 
 - Test: POST /api/tasks with header and body
-  ```
+  ```http
   Authorization: Bearer <accessToken received from /login>
   ```
-  ```
+  ```json
   {
       "title": "My first support task"
   }
   ```
 - Response
-  ```
+  ```json
   {
       "success": true,
       "data": {
@@ -1566,7 +1566,7 @@
 
 - Why? A logged-in user should see only their own tasks. The userId is taken from the access token (req.user), so a user can never read another user's tasks.
 - Flow
-  ```
+  ```text
   GET /api/tasks
   (Authorization: Bearer <accessToken>)
               │
@@ -1596,7 +1596,7 @@
 - `ORDER BY created_at DESC` -> newest task first
 - return `result.rows` -> all rows. If user has no tasks, it is an empty array `[]` (not null), so no need of `?? null` like findUserByEmail
 
-  ```
+  ```ts
   import { Task, TaskRow } from "../types/task";
 
   export const fetchTasksByUserId = async(userId: string): Promise<Task[]> => {
@@ -1618,7 +1618,7 @@
 - No validation needed here - userId comes from the verified access token, not from the client
 - Just call fetchTasksByUserId from repository. Still keep this service function, so the route never talks to the repository directly (Route → Service → Repository). Later business logic (filters, pagination etc.) can be added here without touching the route.
 
-  ```
+  ```ts
   import { createTask, fetchTasksByUserId } from "../repositories/user.task.repository";
   import { Task } from "../types/task";
 
@@ -1635,7 +1635,7 @@
 - Call getUserTasks and send response with status 200 (OK) with the tasks
 - Catch the error and pass it to errorHandler using next(error)
 
-  ```
+  ```ts
   import { createUserTask, getUserTasks } from '../services/user.task.service';
 
   userTaskRouter.get('/', async (req, res, next) => {
@@ -1654,11 +1654,11 @@
 
 - No change needed in src/routes/index.ts - userTaskRouter is already plugged with "/tasks" prefix
 - Test: GET /api/tasks with header
-  ```
+  ```http
   Authorization: Bearer <accessToken received from /login>
   ```
 - Response
-  ```
+  ```json
   {
       "success": true,
       "data": {
@@ -1688,7 +1688,7 @@
 
 - Why? A logged-in user should be able to open a single task by its id. We check both taskId and userId in the query, so a user can only read their own task. If the task belongs to someone else, it is treated as "not found" (404) - so the user can't even find out that the task exists.
 - Flow
-  ```
+  ```text
   GET /api/tasks/:taskId
   (Authorization: Bearer <accessToken>)
               │
@@ -1724,7 +1724,7 @@
 - `WHERE id = $1 AND user_id = $2` -> task must match the id AND belong to the logged-in user. Without `user_id = $2`, any logged-in user could read any task just by knowing its id.
 - return the result - first row if found, else null (same as findUserByEmail)
 
-  ```
+  ```ts
   export const fetchTaskByTaskId = async(taskId: string, userId: string): Promise<Task | null> => {
       const result = await pool.query<TaskRow>(
           `
@@ -1747,7 +1747,7 @@
 - Why a separate validators file and not inside user.task.service.ts? Every route with `:taskId` in the URL needs this check - GET by id, PATCH, DELETE, and later the admin routes too. Keeping it in its own file means any service can import it, instead of one service importing from another or copy-pasting the same code (2 copies = 2 places to fix if the rule changes).
 - validateTaskId is exported (services use it), UUID_REGEX is NOT exported (only validateTaskId needs it)
 
-  ```
+  ```ts
   import { AppError } from "../errors/AppError";
 
   const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -1767,7 +1767,7 @@
   - If task is null (not found or belongs to another user) - throw AppError 404 (Not Found)
   - Return the task
 
-  ```
+  ```ts
   import { createTask, fetchTaskByTaskId, fetchTasksByUserId } from "../repositories/user.task.repository";
   import { validateTaskId } from "../validators/task.validator";
 
@@ -1796,7 +1796,7 @@
 - Call getUserTaskById and send response with status 200 (OK) with the task
 - Catch the error (e.g. AppError 404) and pass it to errorHandler using next(error)
 
-  ```
+  ```ts
   import { createUserTask, getUserTaskById, getUserTasks } from '../services/user.task.service';
 
   userTaskRouter.get('/:taskId', async(req, res, next) => {
@@ -1815,11 +1815,11 @@
 
 - No change needed in src/routes/index.ts - userTaskRouter is already plugged with "/tasks" prefix
 - Test: GET /api/tasks/<taskId> with header
-  ```
+  ```http
   Authorization: Bearer <accessToken received from /login>
   ```
 - Response
-  ```
+  ```json
   {
       "success": true,
       "data": {
@@ -1835,14 +1835,14 @@
   }
   ```
 - Response - when task is not found or belongs to another user (404)
-  ```
+  ```json
   {
       "success": false,
       "message": "Task not found!"
   }
   ```
 - Response - when taskId is not a valid UUID, e.g. GET /api/tasks/abc (400)
-  ```
+  ```json
   {
       "success": false,
       "message": "Invalid task id."
@@ -1856,14 +1856,14 @@
   - PUT -> replaces the whole resource. Client must send ALL fields.
   - PATCH -> partial update. Client sends ONLY the fields it wants to change, other fields stay the same.
   - So here the client can send only title, only status, or both. id, user_id, created_at never change.
-  ```
+  ```text
   { "status": "RESOLVED" }                      → only status is updated, title stays same
   { "title": "New title" }                      → only title is updated, status stays same
   { "title": "New title", "status": "OPEN" }    → both are updated
   {}                                            → 400 (nothing to update)
   ```
 - Flow
-  ```
+  ```text
   PATCH /api/tasks/:taskId { title?, status? }
   (Authorization: Bearer <accessToken>)
               │
@@ -1920,7 +1920,7 @@
 - Query stays fixed. For the field that was not sent, we pass `null` and `COALESCE` keeps the current value of the column.
 - `COALESCE(a, b)` -> returns the first value that is not null
   - `COALESCE($1, title)` -> if $1 has a value, use it. If $1 is null, use the current `title` (i.e. no change)
-  ```
+  ```text
   COALESCE('New title', title)   → 'New title'   (updated)
   COALESCE(NULL, title)          → title         (same as before)
   ```
@@ -1931,7 +1931,7 @@
 - return the result - updated row if found, else null (same as fetchTaskByTaskId)
   - Why `?? null`? If no row is updated, `result.rows[0]` is `undefined`. The return type says `Task | null`, so we convert `undefined` to `null` to keep it consistent with other repository functions.
 
-  ```
+  ```ts
   // Option A - COALESCE: fields not sent are passed as null, and COALESCE($n, column) keeps the current value
   export const updateTaskByPatch = async (taskId: string, userId: string, title?: string, status?: string): Promise<Task | null> => {
       const result = await pool.query<TaskRow>(
@@ -1962,7 +1962,7 @@
 - e.g. only status sent → `SET status = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3` with values `[status, taskId, userId]`
 - Column names (`title`, `status`) are hardcoded in our code. NEVER build column names from `req.body` keys - that would allow SQL injection through column names. Only values go through `$n` placeholders.
 
-  ```
+  ```ts
   export const updateTaskByPatch = async (taskId: string, userId: string, title?: string, status?: string): Promise<Task | null> => {
       const fields: string[] = []
       const values: unknown[] = []
@@ -2005,7 +2005,7 @@
   - `TASK_STATUSES.includes(status)` -> checks status is one of the allowed values - else 400
   - Return the valid status
 
-  ```
+  ```ts
   const TASK_STATUSES = ['OPEN', 'IN PROGRESS', 'RESOLVED']
 
   const validateStatus = (status: unknown): string => {
@@ -2032,7 +2032,7 @@
   - If task is null (not found or belongs to another user) - throw AppError 404 (Not Found)
   - Return the updated task
 
-  ```
+  ```ts
   import { createTask, fetchTaskByTaskId, fetchTasksByUserId, updateTaskByPatch } from "../repositories/user.task.repository";
 
   export const updateUserTask = async (taskId: string, userId: string, title?: unknown, status?: unknown): Promise<Task | null> => {
@@ -2068,7 +2068,7 @@
 - Call updateUserTask and send response with status 200 (OK) with the updated task
 - Catch the error (e.g. AppError 400/404) and pass it to errorHandler using next(error)
 
-  ```
+  ```ts
   import { createUserTask, getUserTaskById, getUserTasks, updateUserTask } from '../services/user.task.service';
 
   userTaskRouter.patch('/:taskId', async(req, res, next) => {
@@ -2092,16 +2092,16 @@
 
 - No change needed in src/routes/index.ts - userTaskRouter is already plugged with "/tasks" prefix
 - Test: PATCH /api/tasks/<taskId> with header and body
-  ```
+  ```http
   Authorization: Bearer <accessToken received from /login>
   ```
-  ```
+  ```json
   {
       "status": "IN PROGRESS"
   }
   ```
 - Response - only status is changed, title stays the same
-  ```
+  ```json
   {
       "success": true,
       "data": {
@@ -2117,35 +2117,35 @@
   }
   ```
 - Response - when body is empty `{}` (400)
-  ```
+  ```json
   {
       "success": false,
       "message": "At least one field (title or status) is required."
   }
   ```
 - Response - when title is sent but empty/invalid, e.g. "title": "" (400)
-  ```
+  ```json
   {
       "success": false,
       "message": "Valid title is required."
   }
   ```
 - Response - when status is sent but not one of OPEN / IN PROGRESS / RESOLVED, e.g. "status": "DONE" (400)
-  ```
+  ```json
   {
       "success": false,
       "message": "Invalid task status."
   }
   ```
 - Response - when taskId is not a valid UUID, e.g. PATCH /api/tasks/abc (400)
-  ```
+  ```json
   {
       "success": false,
       "message": "Invalid task id."
   }
   ```
 - Response - when task is not found or belongs to another user (404)
-  ```
+  ```json
   {
       "success": false,
       "message": "Task not found"
@@ -2156,7 +2156,7 @@
 
 - Why? A logged-in user should be able to delete their own task. Same as GET by id & PATCH, we check both taskId and userId in the query, so a user can only delete their own task. If the task belongs to someone else, it is treated as "not found" (404).
 - Flow
-  ```
+  ```text
   DELETE /api/tasks/:taskId
   (Authorization: Bearer <accessToken>)
               │
@@ -2196,7 +2196,7 @@
   - task not found / belongs to another user → rowCount = 0 → return false
   - Why `?? 0`? In pg types, rowCount is `number | null`, so we convert null to 0 before comparing
 
-  ```
+  ```ts
   export const deleteTask = async(taskId: string, userId: string): Promise<boolean> => {
       const result = await pool.query(
           `
@@ -2220,7 +2220,7 @@
 - If deletedTask is false (not found or belongs to another user) - throw AppError 404 (Not Found)
 - Return type is `Promise<void>` - nothing to return. If no error is thrown, it means the task was deleted.
 
-  ```
+  ```ts
   import { createTask, deleteTask, fetchTaskByTaskId, fetchTasksByUserId, updateTaskByPatch } from "../repositories/user.task.repository";
 
   export const deleteUserTask = async (taskId: string, userId: string): Promise<void> => {
@@ -2246,7 +2246,7 @@
   - Alternative: status 204 (No Content) with `res.status(204).send()` - also common for DELETE, but 204 can't have a response body. We use 200 so that the client gets a message.
 - Catch the error (e.g. AppError 400/404) and pass it to errorHandler using next(error)
 
-  ```
+  ```ts
   import { createUserTask, deleteUserTask, getUserTaskById, getUserTasks, updateUserTask } from '../services/user.task.service';
 
   userTaskRouter.delete('/:taskId', async (req, res, next) => {
@@ -2267,25 +2267,25 @@
 
 - No change needed in src/routes/index.ts - userTaskRouter is already plugged with "/tasks" prefix
 - Test: DELETE /api/tasks/<taskId> with header (no body needed)
-  ```
+  ```http
   Authorization: Bearer <accessToken received from /login>
   ```
 - Response
-  ```
+  ```json
   {
       "success": true,
       "message": "Task <taskId> is deleted successfully."
   }
   ```
 - Response - when task is not found, belongs to another user, or is already deleted (404)
-  ```
+  ```json
   {
       "success": false,
       "message": "Task not found."
   }
   ```
 - Response - when taskId is not a valid UUID, e.g. DELETE /api/tasks/abc (400)
-  ```
+  ```json
   {
       "success": false,
       "message": "Invalid task id."
@@ -2298,7 +2298,7 @@
   - search -> tasks whose title contains some text (case-insensitive)
   - status -> tasks with a given status (OPEN / IN PROGRESS / RESOLVED)
 - Filters come from the URL query string (the part after `?`), NOT from the body. GET requests don't have a body.
-  ```
+  ```http
   GET /api/admin/tasks                              → all tasks
   GET /api/admin/tasks?search=login                 → title contains "login"
   GET /api/admin/tasks?status=open                  → only OPEN tasks
@@ -2306,14 +2306,14 @@
   ```
 - Only users with role 'ADMIN' can call this route. role column of users table has DEFAULT 'USER' (see 002_create_user_table.sql), so to test, make a user admin manually in DB:
 
-  ```
+  ```sql
   UPDATE users SET role = 'ADMIN' WHERE email = 'admin@example.com';
   ```
 
   - Login again after this - role is stored inside the JWT, so the old token still has role 'USER'
 
 - Flow
-  ```
+  ```text
   GET /api/admin/tasks?search=...&status=...
   (Authorization: Bearer <accessToken>)
               │
@@ -2352,14 +2352,14 @@
 
 ### 1. TASK_STATUSES in src/types/task.ts (shared by user & admin service)
 
-- ```
+- ```ts
   export const TASK_STATUSES = ["OPEN", "IN PROGRESS", "RESOLVED"] as const;
   export type TaskStatus = (typeof TASK_STATUSES)[number]
   ```
 - Line 1 - `as const`
   - Without `as const`, TypeScript sees the array as `string[]` - "an array of any strings". It forgets the exact values.
   - With `as const`, TypeScript remembers the exact values and makes the array readonly (can't push/change it):
-  ```
+  ```ts
   ["OPEN", "IN PROGRESS", "RESOLVED"]            → type: string[]
   ["OPEN", "IN PROGRESS", "RESOLVED"] as const   → type: readonly ["OPEN", "IN PROGRESS", "RESOLVED"]
   ```
@@ -2368,7 +2368,7 @@
   - Step 2: `[number]` -> "what type do I get if I read this array at ANY number index (0, 1, 2...)?" → any one of its items
   - Result:
 
-  ```
+  ```ts
   type TaskStatus = "OPEN" | "IN PROGRESS" | "RESOLVED"
   ```
 
@@ -2380,7 +2380,7 @@
   - `as TaskStatus` tells TypeScript "trust me, treat it as TaskStatus" - it is safe here because includes() is exactly the runtime check that tells us whether it really is one.
 - Update validateStatus in user.task.service.ts to import from types
 
-  ```
+  ```ts
   import { Task, TASK_STATUSES, TaskStatus } from "../types/task";
 
   const validateStatus = (status: unknown): string => {
@@ -2399,7 +2399,7 @@
 - AdminTaskListResponse -> what the service returns
 - Both query & filters are optional (`?`) - client may send none, one or both. Right now Query and Filters look the same, but keeping separate names makes it clear which one is raw and which one is cleaned (same idea as Task & TaskRow).
 
-  ```
+  ```ts
   import { Task } from "./task"
 
   export type AdminTaskListResponse = {
@@ -2422,7 +2422,7 @@
 - Create findAllTasks function. The function will return an array of tasks (Task[]) - an empty array `[]` if nothing matches
 - No `WHERE user_id = ...` here - admin sees tasks of all users
 - Problem: the WHERE part depends on which filters were sent. We have 4 cases:
-  ```
+  ```text
   nothing sent          → (no WHERE)
   only search           → WHERE title ILIKE $1
   only status           → WHERE status = $1
@@ -2433,7 +2433,7 @@
 #### 3.1 The 3 helper variables (lines 6-10)
 
 - Code
-  ```
+  ```ts
   const conditions: string[] = []   // pieces of SQL, e.g. "title ILIKE $1"
   const values: unknown[] = []      // the actual values for $1, $2...
   let paramIndex = 1;               // the next placeholder number to use
@@ -2448,7 +2448,7 @@
 #### 3.2 search filter (lines 12-18)
 
 - Code
-  ```
+  ```ts
   if(filters.search){
       conditions.push(`title ILIKE $${paramIndex}`)
       // Escape \, % and _ so they are matched literally instead of acting as ILIKE wildcards
@@ -2462,12 +2462,12 @@
   - `%` -> any number of characters (0 or more)
   - `_` -> exactly one character
 - `%${escapedSearch}%` -> `%` on both sides means "title CONTAINS this text anywhere"
-  ```
+  ```text
   search = "login"   →  value = "%login%"
   matches: "login bug", "Cannot LOGIN", "fix login page"
   ```
 - Why escape? If the user's search text itself contains `%` or `_`, Postgres treats it as a wildcard, not as a normal character:
-  ```
+  ```text
   search = "%"       →  "%%%"     → matches EVERY title (wrong)
   search = "50%"     →  "%50%%"   → matches "50", "500", "5000 users" (wrong)
   search = "a_b"     →  "%a_b%"   → matches "a_b" but also "axb", "a b" (wrong)
@@ -2477,7 +2477,7 @@
   - `g` -> global - replace ALL matches, not only the first one
   - `"\\$&"` -> the replacement. `\\` in a JS string = one real `\`. `$&` = "the character that was matched". So `%` becomes `\%`, `_` becomes `\_`
   - We escape `\` also, because otherwise a backslash typed by the user would escape the next character
-  ```
+  ```text
   search = "50%"     →  escaped "50\%"    →  value "%50\%%"    → only titles containing "50%"
   search = "a_b"     →  escaped "a\_b"    →  value "%a\_b%"    → only titles containing "a_b"
   ```
@@ -2486,7 +2486,7 @@
 #### 3.3 status filter (lines 19-23)
 
 - Code
-  ```
+  ```ts
   if(filters.status){
       conditions.push(`status = $${paramIndex}`)
       values.push(filters.status)
@@ -2499,13 +2499,13 @@
 #### 3.4 Build the WHERE clause (line 25)
 
 - Code
-  ```
+  ```ts
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
   ```
 - If there is at least one condition → join them with " AND " and put "WHERE" in front
 - If there are no conditions → empty string (no WHERE at all → all tasks)
 - `join(" AND ")` -> joins array items with " AND " in between. With 1 item, no AND is added.
-  ```
+  ```text
   conditions = []                                       →  ""
   conditions = ["status = $1"]                          →  "WHERE status = $1"
   conditions = ["title ILIKE $1", "status = $2"]        →  "WHERE title ILIKE $1 AND status = $2"
@@ -2515,7 +2515,7 @@
 
 - Put whereClause inside the query using `${whereClause}` and pass the values array
 
-  ```
+  ```ts
   import { pool } from "../lib/db";
   import { AdminTaskListFilters } from "../types/admin";
   import { Task, TaskRow } from "../types/task";
@@ -2557,7 +2557,7 @@
 
 - Full example - `?search=login&status=open`
 
-  ```
+  ```sql
   conditions = ["title ILIKE $1", "status = $2"]
   values     = ["%login%", "OPEN"]
 
@@ -2574,7 +2574,7 @@
 
 - Clean the raw values, validate status, then call findAllTasks from repository
 
-  ```
+  ```ts
   import { AppError } from "../errors/AppError";
   import { findAllTasks } from "../repositories/admin.task.repository";
   import { AdminTaskListQuery, AdminTaskListResponse } from "../types/admin";
@@ -2597,7 +2597,7 @@
 #### 4.1 Cleaning search & status (lines 8-9) - read from left to right
 
 - Code
-  ```
+  ```ts
   const search = query.search?.trim() || undefined
   const status = query.status?.toUpperCase().trim() || undefined
   ```
@@ -2608,7 +2608,7 @@
   - `""` is falsy, so `"" || undefined` → undefined
   - Why? `?search=` or `?search=%20%20` (only spaces) means "no search really". If we keep `""`, it is still "sent" in our code. With undefined, the repository's `if(filters.search)` skips it → no filter.
 - What we get for different inputs
-  ```
+  ```text
   URL                         query.status      status (after cleaning)
   (not sent)                  undefined         undefined     → no status filter
   ?status=                    ""                undefined     → no status filter
@@ -2634,7 +2634,7 @@
 - Why admin middleware? authenticate only answers "is this user logged in?". Admin routes need one more question: "is this logged-in user an ADMIN?". Instead of writing this check inside every admin route, we write it once as a middleware and plug it into the admin router.
 - Where does role come from? At login, signAccessToken puts `{ userId, email, role }` inside the JWT (see User Login Flow). authenticate verifies the token and puts this payload in `req.user`. So requireAdmin just reads `req.user.role` - no DB query needed.
 - Flow
-  ```
+  ```text
   Request (already passed authenticate → req.user is set)
               │
               ↓
@@ -2649,7 +2649,7 @@
   - Check `req.user?.role !== "ADMIN"` - if not admin, pass AppError 403 to next() and return
   - Else call next() to move to the route handler
 
-  ```
+  ```ts
   import { Request, Response, NextFunction } from "express";
   import { AppError } from "../errors/AppError";
 
@@ -2690,7 +2690,7 @@
 - get method with "/" path - final endpoint becomes /api/admin/tasks (prefix is added in index.ts)
 - Get search & status from `req.query` (query string), not from req.body
 
-  ```
+  ```ts
   import { Request, Response, NextFunction, Router } from "express";
   import { authenticate } from "../middlewares/auth.middleware";
   import { requireAdmin } from "../middlewares/admin.middleware";
@@ -2727,7 +2727,7 @@
 #### 6.1 Why check the type of req.query values? (lines 16-19)
 
 - We expect `?status=OPEN` → status = "OPEN" (a string). But the client controls the URL and can send other shapes:
-  ```
+  ```ts
   URL                                   req.query.status
   (not sent)                            undefined
   ?status=OPEN                          "OPEN"                   ← string
@@ -2739,7 +2739,7 @@
   2. TypeScript error - getAdminTasks expects `search?: string, status?: string`. TypeScript won't allow passing `string | string[] | ...`.
 - How the condition works - for each value, "it is OK if it is not sent OR it is a string":
 
-  ```
+  ```text
   (search !== undefined && typeof search !== "string")
      │                        │
      │                        └── ...and it is NOT a string (array/object)
@@ -2748,7 +2748,7 @@
 
   - If this is true for search OR (`||`) for status → throw AppError 400
 
-  ```
+  ```text
   search             status                 result
   undefined          undefined              OK  (no filters)
   "login"            undefined              OK
@@ -2762,7 +2762,7 @@
 
 - All admin task routes get "/admin/tasks" prefix → final endpoint becomes /api/admin/tasks
 
-  ```
+  ```ts
   import { Router } from 'express'
   import { healthRouter } from './health.route';
   import { authRouter } from './auth.routes';
@@ -2778,11 +2778,11 @@
   ```
 
 - Test: GET /api/admin/tasks?search=login&status=open with header (no body needed)
-  ```
+  ```http
   Authorization: Bearer <accessToken of an ADMIN user, received from /login>
   ```
 - Response
-  ```
+  ```json
   {
       "success": true,
       "data": {
@@ -2800,7 +2800,7 @@
   }
   ```
 - Response - when nothing matches (200 with empty array, not 404 - an empty list is a valid result)
-  ```
+  ```json
   {
       "success": true,
       "data": {
@@ -2809,28 +2809,28 @@
   }
   ```
 - Response - when status is invalid, e.g. ?status=done (400)
-  ```
+  ```json
   {
       "success": false,
       "message": "Status must be one of Open, In Progress or Resolved"
   }
   ```
 - Response - when same key is sent twice, e.g. ?status=OPEN&status=RESOLVED (400)
-  ```
+  ```json
   {
       "success": false,
       "message": "search and status must be single string values"
   }
   ```
 - Response - when logged-in user is not an admin (403)
-  ```
+  ```json
   {
       "success": false,
       "message": "Admin access required. You do not have admin access it seems"
   }
   ```
 - Response - when token is missing (401)
-  ```
+  ```json
   {
       "success": false,
       "message": "Access Token is required"
@@ -2841,7 +2841,7 @@
 
 - Why? A normal user can change the status of only their OWN task (PATCH /api/tasks/:taskId). An ADMIN (support team) should be able to change the status of ANY task, e.g. move a user's task from OPEN → IN PROGRESS → RESOLVED.
 - Difference from user PATCH
-  ```
+  ```text
                       User PATCH (/api/tasks/:taskId)        Admin PATCH (/api/admin/tasks/:taskId/status)
   Who                 logged-in user                         logged-in ADMIN
   Which tasks         only own task (id AND user_id)         any task (only id)
@@ -2850,7 +2850,7 @@
   ```
 - Why `/:taskId/status` and not just `/:taskId`? The path itself says WHAT is being changed. Admin can change only the status, so a separate, specific endpoint is clearer than a generic "update task" endpoint. Later, other admin actions can get their own paths (e.g. `/:taskId/assign`).
 - Flow
-  ```
+  ```text
   PATCH /api/admin/tasks/:taskId/status { status }
   (Authorization: Bearer <accessToken of ADMIN>)
               │
@@ -2900,7 +2900,7 @@
 - `result.rows[0] ?? null` -> if no row matched the id, rows is `[]` and `rows[0]` is undefined. `?? null` converts it to null, so the service can check `if(!task)` → 404
 - No COALESCE needed here (unlike user PATCH) - status is the only field and it is always sent (service makes sure of it)
 
-  ```
+  ```ts
   export const updateTaskStatus = async (taskId: string, status: string): Promise<Task | null> => {
       const result = await pool.query<TaskRow>(
           `
@@ -2921,7 +2921,7 @@
 
 - Validate taskId, normalize status, validate it, call updateTaskStatus from repository, and throw 404 if task is not found
 
-  ```
+  ```ts
   import { AppError } from "../errors/AppError";
   import { findAllTasks, updateTaskStatus } from "../repositories/admin.task.repository";
   import { AdminTaskListQuery, AdminTaskListResponse } from "../types/admin";
@@ -2961,7 +2961,7 @@
   - Why not `status?.trim()` (like getAdminTasks)? `?.` only protects against undefined/null. It does NOT protect against a number or an object.
 - `.trim().toUpperCase()` -> same as getAdminTasks - " in progress " → "IN PROGRESS"
 - What we get for different inputs
-  ```
+  ```ts
   req.body                        normalizedStatus
   { "status": "resolved" }        "RESOLVED"
   { "status": " In Progress " }   "IN PROGRESS"
@@ -2994,7 +2994,7 @@
 - Call updateAdminTaskStatus and send response with status 200 (OK) with the updated task
 - Catch the error (e.g. AppError 400/404) and pass it to errorHandler using next(error)
 
-  ```
+  ```ts
   import { getAdminTasks, updateAdminTaskStatus } from "../services/admin.task.service";
 
   adminTaskRouter.patch('/:taskId/status', async (req, res, next) => {
@@ -3013,16 +3013,16 @@
 
 - No change needed in src/routes/index.ts - adminTaskRouter is already plugged with "/admin/tasks" prefix
 - Test: PATCH /api/admin/tasks/<taskId>/status with header and body
-  ```
+  ```http
   Authorization: Bearer <accessToken of an ADMIN user, received from /login>
   ```
-  ```
+  ```json
   {
       "status": "resolved"
   }
   ```
 - Response - status is saved in uppercase
-  ```
+  ```json
   {
       "success": true,
       "data": {
@@ -3038,35 +3038,35 @@
   }
   ```
 - Response - when status is missing, empty, not a string or not allowed, e.g. "status": "done" (400)
-  ```
+  ```json
   {
       "success": false,
       "message": "Status must be one of OPEN, IN PROGRESS, RESOLVED"
   }
   ```
 - Response - when taskId is not a valid UUID, e.g. PATCH /api/admin/tasks/abc/status (400)
-  ```
+  ```json
   {
       "success": false,
       "message": "Invalid task id."
   }
   ```
 - Response - when no task has this id (404)
-  ```
+  ```json
   {
       "success": false,
       "message": "Task Not Found"
   }
   ```
 - Response - when logged-in user is not an admin (403)
-  ```
+  ```json
   {
       "success": false,
       "message": "Admin access required. You do not have admin access it seems"
   }
   ```
 - Response - when token is missing (401)
-  ```
+  ```json
   {
       "success": false,
       "message": "Access Token is required"
@@ -3077,7 +3077,7 @@
 
 - Why? A normal user can delete only their OWN task (DELETE /api/tasks/:taskId). An ADMIN (support team) should be able to delete ANY task, e.g. remove spam, duplicate or invalid tasks created by users.
 - Difference from user DELETE
-  ```
+  ```text
                       User DELETE (/api/tasks/:taskId)       Admin DELETE (/api/admin/tasks/:taskId)
   Who                 logged-in user                         logged-in ADMIN
   Which tasks         only own task (id AND user_id)         any task (only id)
@@ -3085,7 +3085,7 @@
   ```
 - Why `/:taskId` and not `/:taskId/delete`? With DELETE, the HTTP method itself says WHAT is being done (delete the whole task). In PATCH, we added `/status` because only one field of the task is changed.
 - Flow
-  ```
+  ```text
   DELETE /api/admin/tasks/:taskId
   (Authorization: Bearer <accessToken of ADMIN>)
               │
@@ -3130,7 +3130,7 @@
   - task not found → rowCount = 0 → return false
   - Why `?? 0`? In pg types, rowCount is `number | null`, so we convert null to 0 before comparing
 
-  ```
+  ```ts
   export const deleteTaskByAdmin = async (taskId: string): Promise<boolean> => {
       const result = await pool.query(
           `
@@ -3155,7 +3155,7 @@
 - If deletedTask is false (no task with this id) - throw AppError 404 (Not Found)
 - Return type is `Promise<void>` - nothing to return. If no error is thrown, it means the task was deleted. (same as deleteUserTask)
 
-  ```
+  ```ts
   import { deleteTaskByAdmin, findAllTasks, updateTaskStatus } from "../repositories/admin.task.repository";
 
   export const deleteTaskWithAdmin = async (taskId: string): Promise<void> => {
@@ -3179,7 +3179,7 @@
   - There is no task to send back (it is deleted), so we send only a message (same as user DELETE)
 - Catch the error (e.g. AppError 400/404) and pass it to errorHandler using next(error)
 
-  ```
+  ```ts
   import { deleteTaskWithAdmin, getAdminTasks, updateAdminTaskStatus } from "../services/admin.task.service";
 
   adminTaskRouter.delete('/:taskId', async (req, res, next) => {
@@ -3200,39 +3200,39 @@
 
 - No change needed in src/routes/index.ts - adminTaskRouter is already plugged with "/admin/tasks" prefix
 - Test: DELETE /api/admin/tasks/<taskId> with header (no body needed)
-  ```
+  ```http
   Authorization: Bearer <accessToken of an ADMIN user, received from /login>
   ```
 - Response
-  ```
+  ```json
   {
       "success": true,
       "message": "Task <taskId> deleted successfully by Admin."
   }
   ```
 - Response - when no task has this id, or it is already deleted (404)
-  ```
+  ```json
   {
       "success": false,
       "message": "Task not found."
   }
   ```
 - Response - when taskId is not a valid UUID, e.g. DELETE /api/admin/tasks/abc (400)
-  ```
+  ```json
   {
       "success": false,
       "message": "Invalid task id."
   }
   ```
 - Response - when logged-in user is not an admin (403)
-  ```
+  ```json
   {
       "success": false,
       "message": "Admin access required. You do not have admin access it seems"
   }
   ```
 - Response - when token is missing (401)
-  ```
+  ```json
   {
       "success": false,
       "message": "Access Token is required"
@@ -3443,7 +3443,7 @@ console.log(afterIncr); // 101  ← INCR returns a number
 
 CLI:
 
-```
+```bash
 SET demo:page_views 100
 GET demo:page_views      → "100"
 INCR demo:page_views     → 101
@@ -3481,7 +3481,7 @@ Other useful hash commands:
 
 CLI:
 
-```
+```bash
 HSET demo:user:profile name "Omkesh" city "Pune"
 HGETALL demo:user:profile
 HGET demo:user:profile city    → "Pune"
@@ -3616,7 +3616,7 @@ Use cases: OTPs, sessions, cache entries, rate-limit windows.
 
 ### Cheat-sheet: example output of `npm run example:redis-types`
 
-```
+```text
 Connected to Redis.
 Ping PONG
 100                                  ← GET (string)
@@ -3637,7 +3637,7 @@ Ping PONG
 
 Files involved:
 
-```
+```bash
 docker-compose.yml     → runs the Redis SERVER (a container)
 .env                   → REDIS_URL = where the Redis server lives
 src/redis/client.ts    → creates ONE Redis client + connectRedis / disconnectRedis helpers
@@ -3647,7 +3647,7 @@ any route / service    → import { redisClient } and run commands
 
 What happens when the app runs:
 
-```
+```bash
 npm run dev
   └─ server.ts → import "dotenv/config"  → .env loaded FIRST
                → startServer()
@@ -3736,7 +3736,7 @@ redisClient.on("end", () => console.log("Redis client is closed."));
 
 Normal startup output:
 
-```
+```text
 Redis connection established.
 Redis client is ready.
 ```
@@ -3905,7 +3905,7 @@ No need to connect again: `server.ts` already connected this same client at star
 
 The most common caching pattern, and the one used in our example.
 
-```
+```text
 Request
   │
   ▼
@@ -3943,7 +3943,7 @@ Read from DB ──▶ save copy in Redis (with TTL) ──▶ return data  (MIS
 
 **Stale** = old. The cache holds a copy taken at some moment. If the DB changes after that, the copy is **out of date**, but Redis doesn't know about it.
 
-```
+```text
 10:00  DB    = [Laptop, Keyboard, Mouse, HDD]
 10:00  Cache = [Laptop, Keyboard, Mouse, HDD]            ← copy saved (TTL 60s)
 10:01  DB    = [Laptop, Keyboard, Mouse, HDD, Desktop]   ← new product added
@@ -3967,7 +3967,7 @@ Read from DB ──▶ save copy in Redis (with TTL) ──▶ return data  (MIS
 
 When data **changes** in the DB (create / update / delete), the cached copy becomes wrong. Fix: **delete the cache key** right after writing to the DB.
 
-```
+```text
 DB changes ──▶ DEL cache key ──▶ next request: MISS ──▶ read fresh data from DB ──▶ save new copy
 ```
 
@@ -4078,7 +4078,7 @@ run().catch((error) => {
 
 Output (first run, cache empty):
 
-```
+```text
 Cache MISS
 data:  [ 'Laptop', 'Keyboard', 'Mouse', 'HDD' ]                  ← read from DB, saved in cache
 dbProducts:  [ 'Laptop', 'Keyboard', 'Mouse', 'HDD', 'Desktop' ] ← DB changed
@@ -4089,7 +4089,7 @@ Fresh Data:  [ 'Laptop', 'Keyboard', 'Mouse', 'HDD', 'Desktop' ] ← cache rebui
 
 Check it in the Redis CLI:
 
-```
+```bash
 GET demo:products     → "[\"Laptop\",\"Keyboard\",\"Mouse\",\"HDD\",\"Desktop\"]"
 TTL demo:products     → 42   (seconds left)
 ```
@@ -4168,7 +4168,7 @@ The demo above used a fake "DB" variable. Now the same ideas run inside the real
 
 ### Where does the caching code live?
 
-```
+```text
 Request ──▶ routes (product.routes.ts) ──▶ controller (product.controller.ts) ──▶ service (product.service.ts)
                                                                                     │
                                                                          ┌──────────┴──────────┐
@@ -4410,7 +4410,7 @@ export async function updateProduct(
 
 **Flow summary**
 
-```
+```http
 GET  /products          → getAllProducts   → Redis "products:all"  → (miss) DB → setEx
 GET  /products?search=… → getAllProducts   → DB only (bypass)
 GET  /products/:id      → getProductById   → Redis "product:id:N"  → (miss) DB → setEx
@@ -4440,7 +4440,7 @@ const getProductCacheKey = (productId: number): string => {
 
 ### Step 2: Separate "DB only" functions from "cached" functions
 
-```
+```text
 getAllProducts()   ──(miss)──▶ fetchAllProductsFromDatabase()   ← only SQL, no Redis
 getProductById()   ──(miss)──▶ fetchSingleProduct()             ← only SQL, no Redis
 ```
@@ -4495,14 +4495,14 @@ export async function getAllProducts(filters: {
 
 The result depends on the filter. If every request used the key `products:all`:
 
-```
+```http
 GET /products?category=books    → MISS → caches ONLY books under "products:all"
 GET /products                   → HIT  → returns only books ❌ wrong data!
 ```
 
 To cache filtered results, the filter must be part of the key:
 
-```
+```text
 products:all
 products:all:category:books
 products:all:search:keyboard
@@ -4623,7 +4623,7 @@ return mapProductRow(result.rows[0])
 
 **❌ Delete cache first, then write DB:**
 
-```
+```text
 1. Writer:  DEL product:id:5
 2. Reader:  GET product:id:5 → MISS → reads DB → gets OLD price (DB not updated yet)
 3. Reader:  SETEX product:id:5 (OLD price)          ← stale copy saved again
@@ -4635,7 +4635,7 @@ The gap between step 1 and 4 is relatively large (a whole DB query), so this goe
 
 **✅ Write DB first, then delete cache** (what our code does):
 
-```
+```text
 1. Writer:  UPDATE products SET price = NEW
 2. Writer:  DEL product:id:5
 3. Reader:  MISS → reads DB → NEW price → caches it ✅
@@ -4643,7 +4643,7 @@ The gap between step 1 and 4 is relatively large (a whole DB query), so this goe
 
 **Is it 100% safe?** Almost. One rare race is still possible:
 
-```
+```text
 1. Reader:  MISS → reads DB → gets OLD price ... (slow)
 2. Writer:  UPDATE DB → DEL cache
 3. Reader:  SETEX with OLD price                    ← stale again
@@ -4685,7 +4685,7 @@ curl localhost:5000/products/1          # Cache Miss → fresh price 999 ✅
 
 Inspect keys in `redis-cli`:
 
-```
+```bash
 KEYS product*            → "products:all", "product:id:1"   (dev only, see warning below)
 TTL product:id:1         → 54
 GET product:id:1         → "{\"id\":1,\"name\":...,\"price\":999,...}"
@@ -5123,7 +5123,7 @@ Redis solves all of these. It is a **shared, in-memory store** with **atomic cou
 
 **Example: multiple app instances behind a load balancer**
 
-```
+```text
                        ┌──────────▶ Server A ──┐
 Client ──▶ Load balancer ───────▶ Server B ───┼──▶ Redis   rateLimit:products:1.2.3.4 = 4
                        └──────────▶ Server C ──┘          (one shared counter)
@@ -5158,7 +5158,7 @@ const RATE_LIMIT_MAX_REQUESTS = 5;
 
 **Flow diagram**
 
-```
+```text
 Incoming Request
        │
        ▼
@@ -5326,6 +5326,7 @@ router.get("/:id", productController.getProductById);
 | `TTL key`            | Remaining lifetime in seconds. `-1` = no expiry, `-2` = key doesn't exist. | `X-RateLimit-Reset` and `Retry-After` |
 
 **Why is `INCR` atomic important?**
+
 Two requests arrive at the same moment on two servers. With "GET the value → add 1 in JS → SET", both could read `4` and both write `5`, so one request is lost. `INCR` runs inside Redis as one step, so the results are always `5` and `6`.
 
 **Try it in `redis-cli`**
@@ -5369,7 +5370,7 @@ const rateLimiterKey = `rateLimit:products:${ip}`;
 
 **The problem:** `INCR` and `EXPIRE` are **two separate calls** from Node to Redis.
 
-```
+```bash
 INCR  → 1   ✅
 EXPIRE      ❌ (Node crashes / network error in between)
 ```
@@ -5489,7 +5490,7 @@ TTL  "rateLimit:products:::1"       # seconds until reset
 
 **The fixed-window boundary problem**
 
-```
+```text
 Limit = 5 / minute
         window 1 (0–60s)        │        window 2 (60–120s)
                      ●●●●● (59s)│(61s) ●●●●●
@@ -5552,42 +5553,55 @@ await redisClient
 ### 15. Common interview questions
 
 **Q1. Why use Redis instead of an in-memory JavaScript object?**
+
 Redis is shared by all app instances, survives app restarts, has atomic `INCR`, and expires keys automatically.
 
 **Q2. Why does `INCR` return 1 when the key doesn't exist?**
+
 Redis treats a missing key as `0`, increments it, and returns `1`.
 
 **Q3. Why use `EXPIRE`?**
+
 It deletes the counter automatically when the window ends, so the client starts a new window without any cleanup code. It also keeps Redis memory from growing forever.
 
 **Q4. Why set `EXPIRE` only when the count is 1?**
+
 If you set it on every request, the TTL resets each time. A client who keeps sending requests would never get a new window (or a slow attacker's window would keep extending).
 
 **Q5. Why is `INCR` followed by `EXPIRE` potentially problematic?**
+
 They are two separate operations. If `INCR` succeeds but `EXPIRE` never runs (crash, network error), the key has no TTL and the client is blocked forever. A Lua script (or `MULTI`) makes them atomic.
 
 **Q6. Why return HTTP 429?**
+
 `429 Too Many Requests` is the standard status code for rate limiting. Clients and proxies understand it, and it can include `Retry-After`.
 
 **Q7. Why use the IP address in the key? What are its problems?**
+
 It gives each client its own counter without needing login. Problems: many users can share one IP (offices, mobile NAT), one user can have many IPs (IPv6, VPNs), and a wrong proxy config can make every request look like it comes from the same IP or let clients spoof it.
 
 **Q8. What happens when the Node.js server restarts?**
+
 Nothing changes. The counters live in Redis, not in the Node process.
 
 **Q9. Can Redis rate limiting work across multiple Node.js servers?**
+
 Yes. All servers use the same Redis and the same key format and limits, so they all update one shared counter.
 
 **Q10. Rate limiting vs throttling?**
+
 Rate limiting **rejects** requests over an allowance (429). Throttling usually **slows down or queues** requests instead of rejecting them. People often use the two words for the same thing.
 
 **Q11. Fixed window vs sliding window?**
+
 A fixed window resets the counter at fixed times, so bursts are possible at the edges (up to 2× the limit). A sliding window always looks at the last N seconds, which is smoother but costs more memory or computation.
 
 **Q12. What happens if Redis goes down?**
+
 It depends on the policy. Fail-closed rejects requests (safer). Fail-open lets them through (more available). Choose per endpoint.
 
 **Q13. What happens if the same middleware is applied twice to a route?**
+
 The counter goes up twice per request, so the real limit becomes about half of the configured limit.
 
 ---
@@ -5622,6 +5636,7 @@ The counter goes up twice per request, so the real limit becomes about half of t
 - publisher sends a message to a named channel.
 - a named redis channel (such as notifications) broadcasts the Message.
 - Every subscriber currently listening to that channel receives the message.
+
   The publisher doesn't need to know who the subscribers are. It simply publishes a message, and Redis distributes it to the subscribers currently listening.
 
 ### Need of Redis Pub/Sub
@@ -6106,25 +6121,27 @@ startNotificationSubscriber().catch((error) => {
 
 ## How does Cloudinary work in a real application?
 
-    1. User selects an image
-        React frontend
-            |
-    2.  Backend receives the file
-        Node.js + Express + Multer
-            |
-    3. Backend uploads it to Cloudinary
-        Cloudinary stores the image
-            |
-    4. Cloudinary returns an image URL
-        For example: a secure HTTPS URL
-            |
-    5. Backend saves the URL in the database
-        PostgreSQL or MongoDB stores the URL, not the image
-            |
-    6. React displays the image
-        The browser fetches it from Cloudinary
+```text
+1. User selects an image
+    React frontend
+        |
+2.  Backend receives the file
+    Node.js + Express + Multer
+        |
+3. Backend uploads it to Cloudinary
+    Cloudinary stores the image
+        |
+4. Cloudinary returns an image URL
+    For example: a secure HTTPS URL
+        |
+5. Backend saves the URL in the database
+    PostgreSQL or MongoDB stores the URL, not the image
+        |
+6. React displays the image
+    The browser fetches it from Cloudinary
+```
 
-    Cloudinary stores the file. Your database stores information about the file.
+Cloudinary stores the file. Your database stores information about the file.
 
 ## Implementation using Node.js and Express
 
@@ -6132,25 +6149,30 @@ startNotificationSubscriber().catch((error) => {
 
 - create cloudinary account.
 - Store Cloud name, API key, API secret in backend environment variables
+
+  ```env
   CLOUDINARY_CLOUD_NAME=your_cloud_name
   CLOUDINARY_API_KEY=your_api_key
   CLOUDINARY_API_SECRET=your_api_secret
+  ```
 
-  Cloud name - Identifies your Cloudinary account
-  API key - Identifies your API credentials
-  API secret - Authenticates privileged operations
+  - Cloud name - Identifies your Cloudinary account
+  - API key - Identifies your API credentials
+  - API secret - Authenticates privileged operations
 
 ### Step 2: Install the required packages
 
-    ```
-    npm install cloudinary multer dotenv
-    npm install -D @types/multer
-    ```
-    What does each package do?
-        - cloudinary: communicates with Cloudinary's API.
-        - multer: receives uploaded files in an Express request.
-        - dotenv: loads environment variables from .env.
-        - @types/multer: provides TypeScript types for Multer.
+```bash
+npm install cloudinary multer dotenv
+npm install -D @types/multer
+```
+
+What does each package do?
+
+- cloudinary: communicates with Cloudinary's API.
+- multer: receives uploaded files in an Express request.
+- dotenv: loads environment variables from .env.
+- @types/multer: provides TypeScript types for Multer.
 
 ### Step 3: Configure Cloudinary
 
@@ -6237,11 +6259,13 @@ export function uploadImage(buffer: Buffer) {
   });
 }
 ```
-    - upload_stream() sends the file data to Cloudinary.
-    - folder organizes your files in Cloudinary.
-    - secure_url is the HTTPS URL used to display the image.
-    - public_id identifies the asset inside Cloudinary, which is useful for deleting or managing it later.
-    - stream.end(buffer) sends the file buffer into the upload stream.
+
+- upload_stream() sends the file data to Cloudinary.
+- folder organizes your files in Cloudinary.
+- secure_url is the HTTPS URL used to display the image.
+- public_id identifies the asset inside Cloudinary, which is useful for deleting or managing it later.
+- stream.end(buffer) sends the file buffer into the upload stream.
+
 - We return both secure_url and public_id because they serve different purposes.
 
 - Register the route in your Express application
@@ -6255,13 +6279,13 @@ export function uploadImage(buffer: Buffer) {
     ```
 
 - endpoint is now: 
-    ```
+    ```http
     POST /api/uploads/image
     ```
 
 ## What happens after the upload?
 - Imagine Cloudinary returns this response:
-    ```
+    ```json
     {
         "imageUrl": "https://res.cloudinary.com/demo/image/upload/profile.jpg",
         "publicId": "my-app/profiles/abc123"
@@ -6281,18 +6305,20 @@ export function uploadImage(buffer: Buffer) {
 - Later, when React fetches that user's profile, it receives the URL. The browser retrieves the image from Cloudinary directly. Your Express server doesn't have to send the image bytes again.
 
 ## What are secure_url and public_id?
-- secure_url: 
-The web address of the image. Use it to display the image in your frontend or save it as the image URL in your database.
+- secure_url:
 
-- public_id: 
-The asset's identifier within Cloudinary. Save it so your backend can locate the exact image for deletion or other management operations.
+  The web address of the image. Use it to display the image in your frontend or save it as the image URL in your database.
+
+- public_id:
+
+  The asset's identifier within Cloudinary. Save it so your backend can locate the exact image for deletion or other management operations.
 
 - For example, if a user changes their profile picture, you might upload the new image, update the database record, and then delete the old Cloudinary asset using its public_id.
 - Deletion must happen on your backend using your Cloudinary credentials. Avoid deleting the old image before the new upload and database update succeed.
 
 ## How does Cloudinary optimize images?
 - Cloudinary can transform images through URL parameters.
-    ```
+    ```ts
     https://res.cloudinary.com/demo/image/upload/w_300,h_300,c_fill/profile.jpg
     ```
 
@@ -6300,16 +6326,19 @@ The asset's identifier within Cloudinary. Save it so your backend can locate the
     - w_300: width of 300 pixels.
     - h_300: height of 300 pixels.
     - c_fill: crop the image to fill the requested dimensions.
+
 Cloudinary supports many other transformations, including format conversion, quality optimization, and cropping. This can help reduce download sizes and improve website performance.
 
 ## Common mistakes to avoid
-Mistake	Better approach
-Storing image binary data in every database row	Store the Cloudinary URL and asset ID unless you have a specific reason to store binary data in the database.
-Putting the API secret in React	Keep privileged Cloudinary credentials on the backend.
-Uploading without size limits	Apply file-size limits and validate file content.
-Accepting uploads from anyone	Authenticate users and authorize who can upload or modify assets.
-Forgetting old images	Track public_id and clean up obsolete assets safely.
-Uploading files to local server folders in production	Use persistent object storage or a media service such as Cloudinary when appropriate.
+
+| Mistake | Better approach |
+| --- | --- |
+| Storing image binary data in every database row | Store the Cloudinary URL and asset ID unless you have a specific reason to store binary data in the database. |
+| Putting the API secret in React | Keep privileged Cloudinary credentials on the backend. |
+| Uploading without size limits | Apply file-size limits and validate file content. |
+| Accepting uploads from anyone | Authenticate users and authorize who can upload or modify assets. |
+| Forgetting old images | Track public_id and clean up obsolete assets safely. |
+| Uploading files to local server folders in production | Use persistent object storage or a media service such as Cloudinary when appropriate. |
 
 - One additional consideration: Cloudinary URLs are often publicly accessible by default. If you're storing private medical documents, identity documents, or other sensitive files, use an appropriate private-storage and access-control strategy rather than exposing public URLs.
 
@@ -6326,7 +6355,7 @@ Uploading files to local server folders in production	Use persistent object stor
 
 ### Big picture
 
-```
+```text
  Client (Postman / React)
      │  POST /api/uploads/image
      │  Header: Authorization: Bearer <token>
@@ -6370,7 +6399,7 @@ Uploading files to local server folders in production	Use persistent object stor
 
 - Same layering as tasks: **Route → Service → Repository → DB**. The only new thing is that the service also calls a second "outside system" - Cloudinary.
 
-```
+```text
                      file.upload.service.ts   (business logic - the "manager")
                       /                    \
                      ↓                      ↓
@@ -6386,7 +6415,7 @@ Uploading files to local server folders in production	Use persistent object stor
 ### Step 1: Env variables (`.env` + `env.ts`)
 
 - In `.env`
-  ```
+  ```env
   CLOUDINARY_CLOUD_NAME=xxxx
   CLOUDINARY_API_KEY=xxxx
   CLOUDINARY_API_SECRET=xxxx
@@ -6431,7 +6460,7 @@ ALTER TABLE users
 - Why a migration and not a repository query? Adding a column changes the **structure** of the table - it happens only ONCE. A repository function runs on EVERY request. Structure changes = migration. Reading/writing data = repository.
 - Both columns can be NULL - old users don't have an avatar yet.
 - users table after migration
-  ```
+  ```text
   id | email          | ... | avatar_url | avatar_public_id
   ---+----------------+-----+------------+-----------------
   u1 | test@gmail.com | ... | NULL       | NULL
@@ -6456,7 +6485,7 @@ export type DBUserAvatarRow = {
 - `limits.fileSize` → reject big files (10 MB here)
 - `fileFilter` → allow only `image/*` mimetypes
 - After multer runs, `req.file` looks like:
-  ```
+  ```ts
   {
       fieldname: 'image',
       originalname: 'profile.jpg',
@@ -6534,7 +6563,7 @@ export type DBUserAvatarRow = {
 
   ```
   - Example result from Cloudinary
-  ```
+  ```ts
   secure_url: "https://res.cloudinary.com/<cloud>/image/upload/v1729/cloudinary-learning/images/abc123.jpg"
   public_id:  "cloudinary-learning/images/abc123"
   ```
@@ -6620,7 +6649,7 @@ export type DBUserAvatarRow = {
 ### Step 8: Business logic service (`src/services/file.upload.service.ts`)
 
 - `uploadUserAvatar(userId, buffer)` - the order of steps is the important part:
-  ```
+  ```text
   1. findUserAvatar(userId)            → remember OLD public_id (may be null)
               │
               ├── user not found ──→ AppError 404
@@ -6685,7 +6714,7 @@ export type DBUserAvatarRow = {
   ```
 
 - `getUserAvatar(userId)` - fetch the current avatar of the logged-in user
-  ```
+  ```text
   1. findUserAvatar(userId)            → read avatar_url & avatar_public_id from DB
               │
               ├── user not found ──→ AppError 404 "User not found"
@@ -6723,7 +6752,7 @@ export type DBUserAvatarRow = {
   ```
 
 - `removeUserAvatar(userId)` - delete the avatar. Again, the order is the important part:
-  ```
+  ```text
   1. findUserAvatar(userId)            → get the public_id of the current avatar
               │
               ├── user not found ──→ AppError 404 "User not found"
@@ -6864,18 +6893,18 @@ apiRouter.use("/uploads", fileUploadRouter)
 ### Complete example - user uploads avatar for the first time
 
 - Request (Postman → Body → form-data → key `image`, type File)
-  ```
+  ```http
   POST /api/uploads/image
   Authorization: Bearer <accessToken>
   image: profile.jpg
   ```
-  ```
+  ```bash
   curl -X POST http://localhost:5001/api/uploads/image \
     -H "Authorization: Bearer <accessToken>" \
     -F "image=@./profile.jpg"
   ```
 - What happens inside
-  ```
+  ```ts
   authenticate          → req.user = { userId: "u1", ... }
   multer                → req.file.buffer = <bytes of profile.jpg>
   route                 → req.file exists ✔
@@ -6885,13 +6914,13 @@ apiRouter.use("/uploads", fileUploadRouter)
   old public_id is null → nothing to delete
   ```
 - DB after
-  ```
+  ```text
   id | email          | avatar_url                 | avatar_public_id
   ---+----------------+----------------------------+---------------------------------
   u1 | test@gmail.com | https://.../abc123.jpg     | cloudinary-learning/images/abc123
   ```
 - Response (201)
-  ```
+  ```json
   {
       "success": true,
       "data": {
@@ -6905,7 +6934,7 @@ apiRouter.use("/uploads", fileUploadRouter)
 
 ### Example - same user uploads a NEW avatar (replace)
 
-```
+```text
 findUserAvatar("u1")  → old public_id = ".../abc123"
 uploadImage(buffer)   → new public_id = ".../xyz789"
 updateUserAvatar(...) → DB now points to xyz789
@@ -6915,22 +6944,22 @@ deleteImage("abc123") → old image removed from Cloudinary (no garbage left)
 ### Example - user fetches avatar
 
 - Request (no body needed)
-  ```
+  ```http
   GET /api/uploads/image
   Authorization: Bearer <accessToken>
   ```
-  ```
+  ```bash
   curl http://localhost:5001/api/uploads/image \
     -H "Authorization: Bearer <accessToken>"
   ```
 - What happens inside
-  ```
+  ```ts
   authenticate          → req.user = { userId: "u1", ... }
   findUserAvatar("u1")  → { avatar_url: "https://.../xyz789.jpg", avatar_public_id: ".../xyz789" }
   return                → { imageUrl, publicId }
   ```
 - Response (200) - user has an avatar
-  ```
+  ```json
   {
       "success": true,
       "data": {
@@ -6942,7 +6971,7 @@ deleteImage("abc123") → old image removed from Cloudinary (no garbage left)
   }
   ```
 - Response (200) - user has no avatar (new user / after delete)
-  ```
+  ```json
   {
       "success": true,
       "data": {
@@ -6955,29 +6984,29 @@ deleteImage("abc123") → old image removed from Cloudinary (no garbage left)
 ### Example - user deletes avatar
 
 - Request (no body needed)
-  ```
+  ```http
   DELETE /api/uploads/image
   Authorization: Bearer <accessToken>
   ```
-  ```
+  ```bash
   curl -X DELETE http://localhost:5001/api/uploads/image \
     -H "Authorization: Bearer <accessToken>"
   ```
 - What happens inside
-  ```
+  ```ts
   authenticate          → req.user = { userId: "u1", ... }
   findUserAvatar("u1")  → { avatar_public_id: ".../xyz789" }
   clearUserAvatar("u1") → DB columns = NULL
   deleteImage("xyz789") → image removed from Cloudinary
   ```
 - DB after
-  ```
+  ```text
   id | email          | avatar_url | avatar_public_id
   ---+----------------+------------+-----------------
   u1 | test@gmail.com | NULL       | NULL
   ```
 - Response (200)
-  ```
+  ```json
   {
       "success": true,
       "message": "Avatar deleted successfully"
@@ -7019,7 +7048,7 @@ deleteImage("abc123") → old image removed from Cloudinary (no garbage left)
 
 ### Big picture
 
-```
+```text
 GET /image
   │
   ▼
@@ -7047,7 +7076,7 @@ DELETE /image ──▶ DB cleared   ──▶ clearAvatarCache(userId)   (old c
 
 ### Step 1: Install ioredis (`package.json`)
 
-```
+```bash
 npm install ioredis bullmq
 ```
 
@@ -7142,7 +7171,7 @@ export const clearAvatarCache = async (userId: string): Promise<void> => {
 
 #### GET - read through the cache
 
-```
+```text
 1. getAvatarsFromCache(userId)
             │
             ├── HIT ──→ return cachedAvatar (no DB call)
@@ -7240,7 +7269,7 @@ export const getUserAvatar = async (userId: string) => {
 
 ### Example - GET twice, then upload
 
-```
+```bash
 GET  (1st)  → getAvatarsFromCache("u1") → null              MISS
             → findUserAvatar("u1")      → { avatar_url: ".../xyz789.jpg", ... }
             → SET avatar:u1 '{"imageUrl":".../xyz789.jpg","publicId":".../xyz789"}' EX 60
@@ -7255,7 +7284,7 @@ GET  (3rd)  → MISS → DB → new111.jpg cached                 (fresh data, n
 
 Check it in redis-cli:
 
-```
+```bash
 docker exec -it redis_course_redis redis-cli
 127.0.0.1:6379> KEYS avatar:*
 1) "avatar:u1"
@@ -7433,7 +7462,7 @@ console.log("Worker is running and waiting for jobs")
 
 ## Job lifecycle & states
 - Every job is always in exactly one **state**. BullMQ moves the job from one state to another.
-```
+```text
 add(job)
    │
    ├── with delay ─────► delayed ──(delay over)──┐
@@ -7612,10 +7641,11 @@ const job = await welcomeQueue.add(JOB_NAME, JOB_DATA, { ...RETRIES_DATA, delay:
 ```
 
 - Delay option is measured in milli-seconds:
-  10_000 = 10 Seconds
-  60_000 = 1 Min
-  3600_000 = 1 hour
-  86_400_000 = 24hr
+
+  - 10_000 = 10 Seconds
+  - 60_000 = 1 Min
+  - 3600_000 = 1 hour
+  - 86_400_000 = 24hr
 
 
   ## Scheduling - upsertJobScheduler
@@ -7652,7 +7682,7 @@ const job = await welcomeQueue.add(JOB_NAME, JOB_DATA, { ...RETRIES_DATA, delay:
   ```
 
 - Cron Expression
-  ```
+  ```text
     0 9 * * *
     │ │ │ │ │
     │ │ │ │ └── Day of week
@@ -7766,7 +7796,7 @@ const job = await welcomeQueue.add(JOB_NAME, JOB_DATA, { ...RETRIES_DATA, delay:
 
 ### Big picture
 
-```
+```text
 API process (npm run dev)                          Worker process (npm run worker)
 ─────────────────────────                          ───────────────────────────────
 DELETE /image
@@ -7804,7 +7834,7 @@ removeUserAvatar(userId)
 
 ### Step 1: Install + worker script (`package.json`)
 
-```
+```bash
 npm install bullmq
 ```
 
@@ -7816,7 +7846,7 @@ npm install bullmq
 ```
 
 - The worker is a **separate Node process**, not part of `server.ts`. Run both in two terminals:
-  ```
+  ```bash
   npm run dev      # terminal 1 - API (producer)
   npm run worker   # terminal 2 - worker
   ```
@@ -7983,7 +8013,7 @@ export async function deleteImage(publicId: string): Promise<{ result: string }>
 
 ### Example - user deletes avatar
 
-```
+```http
 DELETE /api/uploads/image   (user u1, avatar_public_id = "cloudinary-learning/images/xyz789")
 
 API:
@@ -8021,7 +8051,7 @@ curl -X DELETE http://localhost:5001/api/uploads/image \
 - Worker terminal → `Job <id> completed { publicId: ..., result: 'ok' }`.
 - Cloudinary dashboard → image is gone from `cloudinary-learning/images`.
 - **See the queue holding jobs:** stop the worker, upload + delete again, then:
-  ```
+  ```bash
   docker exec -it redis_course_redis redis-cli
   127.0.0.1:6379> KEYS bull:delete_cloudinary_image:*
   ```
@@ -8102,7 +8132,7 @@ Real-life example:
 
 ## Big picture (Authorization Code flow)
 
-```
+```text
 Browser                        Our API (Express)                         Google
 ───────                        ─────────────────                         ──────
 1. GET /api/auth/google ─────▶ startGoogleLogin()
@@ -8139,7 +8169,7 @@ Browser                        Our API (Express)                         Google
   3. Redirect (callback) URL → must be registered in the console
 
 - Steps:
-  ```
+  ```text
   Visit Google Cloud Console (console.cloud.google.com)
           |
   Create New Project
@@ -8179,7 +8209,7 @@ Browser                        Our API (Express)                         Google
 ## Step 1 - Environment variables
 
 - `.env`
-  ```
+  ```env
   GOOGLE_CLIENT_ID=xxxxxxxx.apps.googleusercontent.com
   GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxx
   GOOGLE_CALLBACK_URL=http://localhost:<PORT>/api/auth/google/callback
@@ -8194,7 +8224,7 @@ Browser                        Our API (Express)                         Google
 
 ## Step 2 - Install the package
 
-```
+```bash
 npm i google-auth-library
 ```
 
@@ -8269,7 +8299,7 @@ export const googleAuthUrl = () => {
 | `prompt: "select_account"` | Always show the account picker, even if the user is logged in to one Google account. Spelled with an **underscore** |
 
 - The generated URL looks like:
-  ```
+  ```text
   https://accounts.google.com/o/oauth2/v2/auth
     ?client_id=...
     &redirect_uri=http://localhost:<PORT>/api/auth/google/callback
@@ -8423,7 +8453,7 @@ export const loginWithGoogle = async (code: string): Promise<{ accessToken: stri
 
 ### Find / Link / Create - the 3 cases
 
-```
+```text
                     googleProfile { googleId, email }
                                  │
                                  ▼
@@ -8496,7 +8526,7 @@ authRouter.get("/google/callback", async (req, res, next) => {
    { "success": true, "data": { "accessToken": "eyJhbGciOi..." } }
    ```
 4. Copy the `accessToken` → call a protected route with it:
-   ```
+   ```http
    GET /api/auth/me
    Authorization: Bearer <accessToken>
    ```
